@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HexMap</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<style>
+:root {
+  --color-bg:#171614;--color-surface:#1c1b19;--color-surface-2:#201f1d;
+  --color-border:#393836;--color-text:#cdccca;--color-text-muted:#797876;
+  --color-primary:#4f98a3;--font-body:'Inter',sans-serif;
+  --radius-sm:0.375rem;--radius-md:0.5rem;--radius-lg:0.75rem;
+  --transition:180ms cubic-bezier(0.16,1,0.3,1);
+}
+[data-theme="light"]{
+  --color-bg:#f7f6f2;--color-surface:#f9f8f5;--color-surface-2:#fbfbf9;
+  --color-border:#d4d1ca;--color-text:#28251d;--color-text-muted:#7a7974;
+  --color-primary:#01696f;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;font-family:var(--font-body),sans-serif;background:var(--color-bg);color:var(--color-text);overflow:hidden;}
+#map{width:100%;height:100vh;}
+
+#ui{
+  position:fixed;top:12px;left:50%;transform:translateX(-50%);
+  z-index:1000;
+  display:flex;gap:6px;align-items:center;
+  background:var(--color-surface);
+  border:1px solid var(--color-border);
+  border-radius:var(--radius-lg);
+  padding:6px 10px;
+  box-shadow:0 4px 24px oklch(0 0 0/.4);
+  white-space:nowrap;width:max-content;max-width:calc(100vw - 24px);
+}
+.ui-sep{width:1px;height:22px;background:var(--color-border);flex-shrink:0;}
+.ui-label{font-size:10px;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:.07em;}
+
+#search-wrap{position:relative;flex-shrink:0;}
+#search-input{
+  background:var(--color-surface-2);border:1px solid var(--color-border);
+  color:var(--color-text);border-radius:var(--radius-sm);
+  padding:3px 8px;font-size:13px;width:160px;outline:none;
+  transition:border-color var(--transition);
+}
+#search-input:focus{border-color:var(--color-primary);}
+#search-input::placeholder{color:var(--color-text-muted);}
+#search-results{
+  position:absolute;top:calc(100% + 4px);left:0;
+  background:var(--color-surface);border:1px solid var(--color-border);
+  border-radius:var(--radius-md);width:270px;
+  box-shadow:0 8px 24px oklch(0 0 0/.4);
+  overflow:hidden;display:none;z-index:2000;
+}
+.search-item{
+  padding:7px 10px;font-size:13px;cursor:pointer;
+  color:var(--color-text);border-bottom:1px solid var(--color-border);
+  transition:background var(--transition);white-space:normal;line-height:1.3;
+}
+.search-item:last-child{border-bottom:none;}
+.search-item:hover{background:var(--color-surface-2);}
+.search-item .sub{font-size:11px;color:var(--color-text-muted);}
+
+.btn{
+  background:var(--color-surface-2);border:1px solid var(--color-border);
+  color:var(--color-text);border-radius:var(--radius-sm);
+  padding:3px 9px;font-size:12px;cursor:pointer;
+  transition:background var(--transition),color var(--transition),border-color var(--transition);
+  flex-shrink:0;
+}
+.btn:hover{background:var(--color-border);}
+.btn.active{background:var(--color-primary);border-color:var(--color-primary);color:#fff;}
+
+#hex-levels{display:flex;gap:2px;flex-shrink:0;}
+.hex-btn-wrap{position:relative;flex-shrink:0;}
+.hex-btn{
+  width:24px;height:24px;
+  background:var(--color-surface-2);border:1px solid var(--color-border);
+  color:var(--color-text-muted);border-radius:var(--radius-sm);
+  font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:background var(--transition),color var(--transition);
+  font-weight:600;flex-shrink:0;
+}
+.hex-btn:hover{background:var(--color-border);color:var(--color-text);}
+.hex-btn.active{background:var(--color-primary);border-color:var(--color-primary);color:#fff;}
+
+.hex-tooltip{
+  display:none;position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);
+  background:var(--color-surface);border:1px solid var(--color-border);
+  border-radius:var(--radius-md);padding:8px 10px;
+  box-shadow:0 8px 20px oklch(0 0 0/.4);
+  z-index:3000;white-space:nowrap;pointer-events:none;
+  font-size:12px;line-height:1.8;
+}
+.hex-btn-wrap:hover .hex-tooltip{display:block;}
+.hex-tooltip .tt-title{font-weight:600;color:var(--color-text);margin-bottom:2px;}
+.hex-tooltip .tt-row{color:var(--color-text-muted);}
+.hex-tooltip .tt-row span{color:var(--color-text);}
+
+/* Rotation knob */
+#rot-wrap{display:flex;align-items:center;gap:5px;flex-shrink:0;}
+#rot-display{font-size:11px;color:var(--color-text-muted);font-variant-numeric:tabular-nums;width:30px;text-align:right;}
+#rot-reset{
+  background:none;border:1px solid var(--color-border);border-radius:var(--radius-sm);
+  color:var(--color-text-muted);font-size:10px;padding:2px 5px;cursor:pointer;
+  transition:background var(--transition),color var(--transition);flex-shrink:0;
+}
+#rot-reset:hover{background:var(--color-border);color:var(--color-text);}
+#rot-slider{width:60px;accent-color:var(--color-primary);cursor:pointer;flex-shrink:0;}
+
+#hex-opacity{width:60px;accent-color:var(--color-primary);cursor:pointer;flex-shrink:0;}
+
+#theme-toggle{
+  background:none;border:1px solid var(--color-border);
+  border-radius:var(--radius-sm);color:var(--color-text);
+  width:26px;height:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:background var(--transition);flex-shrink:0;
+}
+#theme-toggle:hover{background:var(--color-border);}
+
+.leaflet-control-zoom{border:1px solid var(--color-border)!important;border-radius:var(--radius-md)!important;display:none;}
+.leaflet-control-zoom a{background:var(--color-surface)!important;color:var(--color-text)!important;border-color:var(--color-border)!important;}
+.leaflet-control-zoom a:hover{background:var(--color-surface-2)!important;}
+.leaflet-control-attribution{background:var(--color-surface)!important;color:var(--color-text-muted)!important;font-size:10px!important;}
+
+/* Bottom-right controls */
+#controls-br{
+  position:fixed;bottom:12px;right:12px;z-index:1000;
+  display:flex;flex-direction:column;gap:10px;align-items:center;
+}
+#compass-wrapper{
+  cursor:pointer;
+  transition:transform 100ms ease;
+}
+#compass-wrapper:hover{
+  transform:scale(1.05);
+}
+#compass{
+  filter:drop-shadow(0 2px 8px oklch(0 0 0/.3));
+}
+#zoom-slider-wrapper{
+  display:flex;flex-direction:column;align-items:center;
+  background:var(--color-surface);border:1px solid var(--color-border);
+  border-radius:var(--radius-md);padding:6px;
+  box-shadow:0 2px 8px oklch(0 0 0/.2);
+}
+#zoom-slider{
+  width:24px;height:120px;
+  accent-color:var(--color-primary);
+  cursor:pointer;
+  -webkit-appearance:slider-vertical;
+  writing-mode:bt-lr;
+}
+#zoom-slider::-webkit-slider-thumb{
+  -webkit-appearance:slider-thumb;
+  appearance:slider-thumb;
+  width:20px;height:8px;
+  border-radius:2px;
+  background:var(--color-primary);
+  border:none;
+  cursor:pointer;
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="ui">
+  <!-- Search -->
+  <div id="search-wrap">
+    <input id="search-input" type="text" placeholder="Search place…" autocomplete="off" spellcheck="false"/>
+    <div id="search-results"></div>
+  </div>
+  <div class="ui-sep"></div>
+  <!-- Map layers -->
+  <span class="ui-label">Map</span>
+  <button class="btn active" id="btn-street">Street</button>
+  <button class="btn"        id="btn-satellite">Satellite</button>
+  <button class="btn"        id="btn-topo">Topo</button>
+  <div class="ui-sep"></div>
+  <!-- Hex levels -->
+  <span class="ui-label">Hex</span>
+  <div id="hex-levels"></div>
+  <div class="ui-sep"></div>
+  <!-- Opacity -->
+  <span class="ui-label">Opacity</span>
+  <input type="range" id="hex-opacity" min="0.05" max="1" step="0.05" value="0.55">
+  </div>
+</div>
+
+<!-- Bottom-right controls: Compass + Zoom slider -->
+<div id="controls-br">
+  <div id="compass-wrapper">
+    <svg id="compass" width="48" height="48" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+      <!-- Rose background -->
+      <circle cx="24" cy="24" r="22" fill="var(--color-surface-2)" stroke="var(--color-border)" stroke-width="1"/>
+      <!-- Cardinal directions -->
+      <text x="24" y="8" text-anchor="middle" font-size="10" font-weight="600" fill="var(--color-text)">N</text>
+      <text x="40" y="27" text-anchor="middle" font-size="10" fill="var(--color-text-muted)">E</text>
+      <text x="24" y="42" text-anchor="middle" font-size="10" fill="var(--color-text-muted)">S</text>
+      <text x="8" y="27" text-anchor="middle" font-size="10" fill="var(--color-text-muted)">W</text>
+      <!-- Bearing indicator (rotates with map) -->
+      <g id="compass-bearing" transform="rotate(0 24 24)">
+        <polygon points="24,10 20,22 24,20 28,22" fill="var(--color-primary)"/>
+      </g>
+    </svg>
+  </div>
+  <div id="zoom-slider-wrapper">
+    <input type="range" id="zoom-slider" min="1" max="23" step="1" value="7" id="zoom-slider">
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+const SQ3 = Math.sqrt(3);
+const BASE = 1e6;
+
+// Revised examples — concrete, scale-appropriate
+const META = [
+  { area:'~1.5×1.5 m²',  dist:'~2 m',       example:'A table',           walk:'1 second' },
+  { area:'~8×8 m²',      dist:'~8 m',       example:'A large hut',       walk:'6 seconds' },
+  { area:'~40×40 m²',    dist:'~40 m',      example:'A city block',      walk:'30 seconds' },
+  { area:'~200×200 m²',  dist:'~200 m',     example:'Small village',     walk:'2.5 minutes' },
+  { area:'~1 km²',       dist:'~1 km',      example:'Urban neighborhood',walk:'12 minutes' },
+  { area:'~25 km²',      dist:'~5 km',      example:'Large city',        walk:'1 hour' },
+  { area:'~625 km²',     dist:'~25 km',     example:'Metropolitan area', walk:'6 hours' },
+  { area:'~15.626 km²',  dist:'~130 km',    example:'Small country',     walk:'1.5 days' },
+  { area:'~390.625 km²', dist:'~660 km',    example:'Large country',     walk:'1 week' },
+  { area:'~9.765.625 km²',dist:'~3.300 km', example:'Continent',         walk:'4 weeks' },
+];
+
+const LEVELS = Array.from({length:10},(_,i)=>{
+  const idx=i+1;
+  const areaSqM=BASE*Math.pow(25,idx-5);
+  const R=Math.sqrt(2*areaSqM/(3*SQ3));
+  return{idx,areaSqM,R,...META[i]};
+});
+
+const levelsEl=document.getElementById('hex-levels');
+LEVELS.forEach(lv=>{
+  const wrap=document.createElement('div');
+  wrap.className='hex-btn-wrap';
+  const b=document.createElement('button');
+  b.className='hex-btn'+(lv.idx===5?' active':'');
+  b.textContent=lv.idx;
+  b.onclick=()=>selectLevel(lv.idx);
+  const tt=document.createElement('div');
+  tt.className='hex-tooltip';
+  tt.innerHTML=
+    `<div class="tt-title">L${lv.idx} — ${lv.example}</div>`+
+    `<div class="tt-row">▦ Area &nbsp;<span>${lv.area}</span></div>`+
+    `<div class="tt-row">↔ Spacing &nbsp;<span>${lv.dist}</span></div>`+
+    `<div class="tt-row">👣︎ Walking &nbsp;<span>${lv.walk}</span></div>`;
+  wrap.appendChild(b);wrap.appendChild(tt);
+  levelsEl.appendChild(wrap);
+});
+
+let currentLevel=5,hexOpacity=0.55,hexColor='#4f98a3';
+
+function selectLevel(idx){
+  currentLevel=idx;
+  document.querySelectorAll('.hex-btn').forEach((b,i)=>b.classList.toggle('active',i+1===idx));
+  redrawHex();
+}
+
+// Wire up layer buttons
+document.getElementById('btn-street').addEventListener('click',()=>setLayer('street'));
+document.getElementById('btn-satellite').addEventListener('click',()=>setLayer('satellite'));
+document.getElementById('btn-topo').addEventListener('click',()=>setLayer('topo'));
+
+// ─── MAP ─────────────────────────────────────────────────────────────────────
+// Fallback se leaflet-rotate non è caricato correttamente
+if(typeof L.Map.prototype.getBearing !== 'function'){
+  L.Map.prototype.getBearing = function(){ return this._bearing || 0; };
+  L.Map.prototype.setBearing = function(b){ this._bearing = b; this.fire('rotate'); };
+}
+
+const rotateSupported = typeof L.Map.prototype.setBearing === 'function';
+
+const map=L.map('map',{
+  zoomControl:true,
+  preferCanvas:true,
+  maxZoom:23,
+  ...(rotateSupported ? {rotate:true, touchRotate:true, rotateControl:{closeOnZeroBearing:false}} : {})
+}).setView([44.7,10.3],7);
+
+const layers={
+  street:    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+               {attribution:'© OpenStreetMap',maxZoom:23,maxNativeZoom:19}),
+  satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+               {attribution:'© Esri',maxZoom:23,maxNativeZoom:19}),
+  topo:      L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+               {attribution:'© OpenTopoMap',maxZoom:23,maxNativeZoom:17})
+};
+let currentLayerKey='street';
+layers.street.addTo(map);
+
+function setLayer(key){
+  if(key===currentLayerKey)return;
+  map.removeLayer(layers[currentLayerKey]);
+  layers[key].addTo(map);
+  currentLayerKey=key;
+  ['street','satellite','topo'].forEach(k=>
+    document.getElementById('btn-'+k).classList.toggle('active',k===key));
+}
+
+// ─── SEARCH ───────────────────────────────────────────────────────────────────
+let searchTimer=null;
+const searchInput=document.getElementById('search-input');
+const searchResultsEl=document.getElementById('search-results');
+searchInput.addEventListener('input',()=>{
+  clearTimeout(searchTimer);
+  const q=searchInput.value.trim();
+  if(q.length<3){searchResultsEl.style.display='none';return;}
+  searchTimer=setTimeout(()=>doSearch(q),350);
+});
+searchInput.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){searchResultsEl.style.display='none';searchInput.blur();}
+});
+document.addEventListener('click',e=>{
+  if(!document.getElementById('search-wrap').contains(e.target))
+    searchResultsEl.style.display='none';
+});
+async function doSearch(q){
+  try{
+    const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6`,
+      {headers:{'Accept-Language':'en'}});
+    renderResults(await r.json());
+  }catch(e){}
+}
+function renderResults(items){
+  searchResultsEl.innerHTML='';
+  if(!items.length){
+    searchResultsEl.innerHTML='<div class="search-item" style="color:var(--color-text-muted)">No results</div>';
+    searchResultsEl.style.display='block';return;
+  }
+  items.forEach(item=>{
+    const d=document.createElement('div');
+    d.className='search-item';
+    const name=item.name||item.display_name.split(',')[0];
+    const sub=item.display_name.split(',').slice(1,3).join(',').trim();
+    d.innerHTML=`<div>${name}</div><div class="sub">${sub}</div>`;
+    d.onclick=()=>{
+      const bb=item.boundingbox;
+      bb?map.fitBounds([[+bb[0],+bb[2]],[+bb[1],+bb[3]]],{maxZoom:14}):map.setView([+item.lat,+item.lon],13);
+      searchResultsEl.style.display='none';
+      searchInput.value=name;
+    };
+    searchResultsEl.appendChild(d);
+  });
+  searchResultsEl.style.display='block';
+}
+
+// ─── ROTATION & COMPASS ──────────────────────────────────────────────────────
+function updateCompass(bearing){
+  document.getElementById('compass-bearing').setAttribute('transform',`rotate(${bearing} 24 24)`);
+}
+function resetRotation(){
+  map.setBearing(0);
+  updateCompass(0);
+  scheduleRedraw();
+}
+map.on('rotate',()=>updateCompass(map.getBearing()));
+
+// ─── ZOOM SLIDER ─────────────────────────────────────────────────────────────
+const zoomSliderEl = document.getElementById('zoom-slider');
+zoomSliderEl.addEventListener('input', ()=>{ map.setZoom(parseInt(zoomSliderEl.value)); });
+map.on('zoomend',()=>{ zoomSliderEl.value = map.getZoom(); });
+
+// ─── KEYBOARD & MOUSE CONTROLS ───────────────────────────────────────────────
+// Ctrl+Wheel: rotate, Shift+Wheel: zoom ×2
+document.addEventListener('wheel',(e)=>{
+  if(e.ctrlKey){
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 5 : -5;  // scroll down → rotate right (+)
+    const newBearing = map.getBearing() + delta;
+    map.setBearing(newBearing);
+    updateCompass(map.getBearing());
+    scheduleRedraw();
+  } else if(e.shiftKey){
+    e.preventDefault();
+    const currentZoom = map.getZoom();
+    const newZoom = e.deltaY > 0
+      ? Math.max(1, currentZoom - 2)
+      : Math.min(23, currentZoom + 2);
+    map.setZoom(newZoom);
+  }
+},{passive:false});
+
+// Compass click to reset
+document.getElementById('compass-wrapper').addEventListener('click', resetRotation);
+
+// ─── HEX GRID ─────────────────────────────────────────────────────────────────
+function mToLat(m){return m/111320;}
+function mToLng(m,lat){return m/(111320*Math.cos(lat*Math.PI/180));}
+
+function hexCenters(bounds,R){
+  const colW=SQ3*R,rowH=1.5*R;
+  const c=bounds.getCenter();
+  const latH=mToLat(rowH),lngW=mToLng(colW,c.lat);
+  const pad=mToLat(R*2),padL=mToLng(colW,c.lat);
+  const minLat=bounds.getSouth()-pad,maxLat=bounds.getNorth()+pad;
+  const minLng=bounds.getWest()-padL,maxLng=bounds.getEast()+padL;
+  const cols=Math.ceil((maxLng-minLng)/lngW)+1;
+  const rows=Math.ceil((maxLat-minLat)/latH)+1;
+  if(cols*rows>8000)return null;
+  const cs=[],lngHalf=lngW/2;
+  for(let row=0;row*latH<(maxLat-minLat)+latH;row++){
+    const lat=minLat+row*latH,off=(row%2===0)?0:lngHalf;
+    for(let col=0;col*lngW<(maxLng-minLng)+lngW;col++)
+      cs.push([lat,minLng+col*lngW+off]);
+  }
+  return cs;
+}
+function hexPts(lat,lng,R,latRef){
+  const latR=mToLat(R),lngR=mToLng(R,latRef),pts=[];
+  for(let i=0;i<6;i++){const a=(Math.PI/180)*(60*i+30);pts.push([lat+latR*Math.sin(a),lng+lngR*Math.cos(a)]);}
+  return pts;
+}
+
+let hexLayer=null;
+function redrawHex(){
+  if(hexLayer){map.removeLayer(hexLayer);hexLayer=null;}
+  const lv=LEVELS[currentLevel-1];
+  const bounds=map.getBounds();
+  const centers=hexCenters(bounds,lv.R);
+  if(!centers)return;
+  const latRef=bounds.getCenter().lat;
+  const polys=[],padded=bounds.pad(0.05);
+  centers.forEach(([lat,lng])=>{if(padded.contains([lat,lng]))polys.push(hexPts(lat,lng,lv.R,latRef));});
+  hexLayer=L.layerGroup([L.polygon(polys,{
+    color:hexColor,weight:1,opacity:hexOpacity,
+    fillColor:hexColor,fillOpacity:hexOpacity*0.08,interactive:false
+  })]).addTo(map);
+}
+
+let redrawTimer=null;
+function scheduleRedraw(){clearTimeout(redrawTimer);redrawTimer=setTimeout(redrawHex,120);}
+
+// Ctrl+Drag for rotation
+let dragStart=null,dragStartBearing=null;
+map.on('mousedown',(e)=>{
+  if(!e.originalEvent.ctrlKey) return;
+  dragStart = e.originalEvent.clientX;
+  dragStartBearing = map.getBearing();
+});
+document.addEventListener('mousemove',(e)=>{
+  if(dragStart === null || !e.ctrlKey){ if(dragStart!==null && !e.ctrlKey){ dragStart=null; } return; }
+  const delta = (e.clientX - dragStart) * 0.5;
+  map.setBearing(dragStartBearing + delta);
+  updateCompass(map.getBearing());
+  scheduleRedraw();
+});
+document.addEventListener('mouseup',()=>{
+  dragStart=null;
+  dragStartBearing=null;
+});
+
+map.on('moveend',scheduleRedraw);
+map.on('zoomend',scheduleRedraw);
+
+// ─── THEME ────────────────────────────────────────────────────────────────────
+let isDark=true;
+function toggleTheme(){
+  isDark=!isDark;
+  document.documentElement.setAttribute('data-theme',isDark?'dark':'light');
+  hexColor=isDark?'#4f98a3':'#01696f';
+  document.getElementById('theme-toggle').innerHTML=isDark
+    ?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
+    :'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>';
+  redrawHex();
+}
+function setOpacity(v){hexOpacity=parseFloat(v);redrawHex();}
+document.getElementById('hex-opacity').addEventListener('input', function(){ setOpacity(this.value); });
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+redrawHex();
+});
+</script>
+</body>
+</html>
