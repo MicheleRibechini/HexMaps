@@ -1,482 +1,781 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>HexMap</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
-<style>
-:root {
-  --color-bg:#171614;--color-surface:#1c1b19;--color-surface-2:#201f1d;
-  --color-border:#393836;--color-text:#cdccca;--color-text-muted:#797876;
-  --color-primary:#4f98a3;--font-body:'Inter',sans-serif;
-  --radius-sm:0.375rem;--radius-md:0.5rem;--radius-lg:0.75rem;
-  --transition:180ms cubic-bezier(0.16,1,0.3,1);
-}
-[data-theme="light"]{
-  --color-bg:#f7f6f2;--color-surface:#f9f8f5;--color-surface-2:#fbfbf9;
-  --color-border:#d4d1ca;--color-text:#28251d;--color-text-muted:#7a7974;
-  --color-primary:#01696f;
-}
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-html,body{height:100%;font-family:var(--font-body),sans-serif;background:var(--color-bg);color:var(--color-text);overflow:hidden;}
-#map{width:100%;height:100vh;}
-
-#ui{
-  position:fixed;top:12px;left:50%;transform:translateX(-50%);
-  z-index:1000;
-  display:flex;gap:6px;align-items:center;
-  background:var(--color-surface);
-  border:1px solid var(--color-border);
-  border-radius:var(--radius-lg);
-  padding:6px 10px;
-  box-shadow:0 4px 24px oklch(0 0 0/.4);
-  white-space:nowrap;width:max-content;max-width:calc(100vw - 24px);
-}
-.ui-sep{width:1px;height:22px;background:var(--color-border);flex-shrink:0;}
-.ui-label{font-size:10px;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:.07em;}
-
-#search-wrap{position:relative;flex-shrink:0;}
-#search-input{
-  background:var(--color-surface-2);border:1px solid var(--color-border);
-  color:var(--color-text);border-radius:var(--radius-sm);
-  padding:3px 8px;font-size:13px;width:160px;outline:none;
-  transition:border-color var(--transition);
-}
-#search-input:focus{border-color:var(--color-primary);}
-#search-input::placeholder{color:var(--color-text-muted);}
-#search-results{
-  position:absolute;top:calc(100% + 4px);left:0;
-  background:var(--color-surface);border:1px solid var(--color-border);
-  border-radius:var(--radius-md);width:270px;
-  box-shadow:0 8px 24px oklch(0 0 0/.4);
-  overflow:hidden;display:none;z-index:2000;
-}
-.search-item{
-  padding:7px 10px;font-size:13px;cursor:pointer;
-  color:var(--color-text);border-bottom:1px solid var(--color-border);
-  transition:background var(--transition);white-space:normal;line-height:1.3;
-}
-.search-item:last-child{border-bottom:none;}
-.search-item:hover{background:var(--color-surface-2);}
-.search-item .sub{font-size:11px;color:var(--color-text-muted);}
-
-.btn{
-  background:var(--color-surface-2);border:1px solid var(--color-border);
-  color:var(--color-text);border-radius:var(--radius-sm);
-  padding:3px 9px;font-size:12px;cursor:pointer;
-  transition:background var(--transition),color var(--transition),border-color var(--transition);
-  flex-shrink:0;
-}
-.btn:hover{background:var(--color-border);}
-.btn.active{background:var(--color-primary);border-color:var(--color-primary);color:#fff;}
-
-#hex-levels{display:flex;gap:2px;flex-shrink:0;}
-.hex-btn-wrap{position:relative;flex-shrink:0;}
-.hex-btn{
-  width:24px;height:24px;
-  background:var(--color-surface-2);border:1px solid var(--color-border);
-  color:var(--color-text-muted);border-radius:var(--radius-sm);
-  font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;
-  transition:background var(--transition),color var(--transition);
-  font-weight:600;flex-shrink:0;
-}
-.hex-btn:hover{background:var(--color-border);color:var(--color-text);}
-.hex-btn.active{background:var(--color-primary);border-color:var(--color-primary);color:#fff;}
-
-.hex-tooltip{
-  display:none;position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);
-  background:var(--color-surface);border:1px solid var(--color-border);
-  border-radius:var(--radius-md);padding:8px 10px;
-  box-shadow:0 8px 20px oklch(0 0 0/.4);
-  z-index:3000;white-space:nowrap;pointer-events:none;
-  font-size:12px;line-height:1.8;
-}
-.hex-btn-wrap:hover .hex-tooltip{display:block;}
-.hex-tooltip .tt-title{font-weight:600;color:var(--color-text);margin-bottom:2px;}
-.hex-tooltip .tt-row{color:var(--color-text-muted);}
-.hex-tooltip .tt-row span{color:var(--color-text);}
-
-/* Rotation knob */
-#rot-wrap{display:flex;align-items:center;gap:5px;flex-shrink:0;}
-#rot-display{font-size:11px;color:var(--color-text-muted);font-variant-numeric:tabular-nums;width:30px;text-align:right;}
-#rot-reset{
-  background:none;border:1px solid var(--color-border);border-radius:var(--radius-sm);
-  color:var(--color-text-muted);font-size:10px;padding:2px 5px;cursor:pointer;
-  transition:background var(--transition),color var(--transition);flex-shrink:0;
-}
-#rot-reset:hover{background:var(--color-border);color:var(--color-text);}
-#rot-slider{width:60px;accent-color:var(--color-primary);cursor:pointer;flex-shrink:0;}
-
-#hex-opacity{width:60px;accent-color:var(--color-primary);cursor:pointer;flex-shrink:0;}
-
-#theme-toggle{
-  background:none;border:1px solid var(--color-border);
-  border-radius:var(--radius-sm);color:var(--color-text);
-  width:26px;height:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;
-  transition:background var(--transition);flex-shrink:0;
-}
-#theme-toggle:hover{background:var(--color-border);}
-
-.leaflet-control-zoom{border:1px solid var(--color-border)!important;border-radius:var(--radius-md)!important;display:none;}
-.leaflet-control-zoom a{background:var(--color-surface)!important;color:var(--color-text)!important;border-color:var(--color-border)!important;}
-.leaflet-control-zoom a:hover{background:var(--color-surface-2)!important;}
-.leaflet-control-attribution{background:var(--color-surface)!important;color:var(--color-text-muted)!important;font-size:10px!important;}
-
-/* Bottom-right controls */
-#controls-br{
-  position:fixed;bottom:12px;right:12px;z-index:1000;
-  display:flex;flex-direction:column;gap:10px;align-items:center;
-}
-#compass-wrapper{
-  cursor:pointer;
-  transition:transform 100ms ease;
-}
-#compass-wrapper:hover{
-  transform:scale(1.05);
-}
-#compass{
-  filter:drop-shadow(0 2px 8px oklch(0 0 0/.3));
-}
-#zoom-slider-wrapper{
-  display:flex;flex-direction:column;align-items:center;
-  background:var(--color-surface);border:1px solid var(--color-border);
-  border-radius:var(--radius-md);padding:6px;
-  box-shadow:0 2px 8px oklch(0 0 0/.2);
-}
-#zoom-slider{
-  width:24px;height:120px;
-  accent-color:var(--color-primary);
-  cursor:pointer;
-  -webkit-appearance:slider-vertical;
-  writing-mode:bt-lr;
-}
-#zoom-slider::-webkit-slider-thumb{
-  -webkit-appearance:slider-thumb;
-  appearance:slider-thumb;
-  width:20px;height:8px;
-  border-radius:2px;
-  background:var(--color-primary);
-  border:none;
-  cursor:pointer;
-}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HexMap</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <style>
+    :root {
+      --color-bg: #171614;
+      --color-surface: #1c1b19;
+      --color-surface-2: #201f1d;
+      --color-border: #393836;
+      --color-text: #cdccca;
+      --color-text-muted: #797876;
+      --color-primary: #4f98a3;
+      --font-body: Inter, sans-serif;
+      --radius-sm: 0.375rem;
+      --radius-md: 0.5rem;
+      --radius-lg: 0.75rem;
+      --transition: 180ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    [data-theme="light"] {
+      --color-bg: #f7f6f2;
+      --color-surface: #f9f8f5;
+      --color-surface-2: #fbfbf9;
+      --color-border: #d4d1ca;
+      --color-text: #28251d;
+      --color-text-muted: #7a7974;
+      --color-primary: #01696f;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html,body{height:100%;font-family:var(--font-body),sans-serif;background:var(--color-bg);color:var(--color-text);overflow:hidden;}
+    #map{width:100%;height:100vh;}
+    #ui{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:1000;display:flex;gap:6px;align-items:center;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-lg);padding:6px 10px;box-shadow:0 4px 24px oklch(0 0 0.4);white-space:nowrap;width:max-content;max-width:calc(100vw - 24px);}
+    .ui-sep{width:1px;height:22px;background:var(--color-border);flex-shrink:0;}
+    .ui-label{font-size:10px;color:var(--color-text-muted);text-transform:uppercase;letter-spacing:0.07em;margin-right:4px;}
+    #search-wrap{position:relative;flex-shrink:0;}
+    #search-input{background:var(--color-surface-2);border:1px solid var(--color-border);color:var(--color-text);border-radius:var(--radius-sm);padding:3px 8px;font-size:13px;width:160px;outline:none;transition:border-color var(--transition);}
+    #search-input:focus{border-color:var(--color-primary);}
+    #search-input::placeholder{color:var(--color-text-muted);}
+    #search-results{position:absolute;top:calc(100% + 4px);left:0;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);width:270px;box-shadow:0 8px 24px oklch(0 0 0.4);overflow:hidden;display:none;z-index:2000;}
+    .search-item{padding:7px 10px;font-size:13px;cursor:pointer;color:var(--color-text);border-bottom:1px solid var(--color-border);transition:background var(--transition);white-space:normal;line-height:1.3;}
+    .search-item:last-child{border-bottom:none;}
+    .search-item:hover{background:var(--color-surface-2);}
+    .search-item .sub{font-size:11px;color:var(--color-text-muted);}
+    .btn{background:var(--color-surface-2);border:1px solid var(--color-border);color:var(--color-text);border-radius:var(--radius-sm);padding:3px 9px;font-size:12px;cursor:pointer;transition:background var(--transition),color var(--transition),border-color var(--transition);flex-shrink:0;}
+    .btn:hover{background:var(--color-border);}
+    .btn.active{background:var(--color-primary);border-color:var(--color-primary);color:#fff;}
+    #hex-levels{display:flex;gap:2px;flex-shrink:0;}
+    .hex-btn-wrap{position:relative;flex-shrink:0;}
+    .hex-btn{width:24px;height:24px;background:var(--color-surface-2);border:1px solid var(--color-border);color:var(--color-text-muted);border-radius:var(--radius-sm);font-size:11px;cursor:default;display:flex;align-items:center;justify-content:center;transition:background var(--transition),color var(--transition);font-weight:600;flex-shrink:0;}
+    .hex-btn.active{background:var(--color-primary);border-color:var(--color-primary);color:#fff;}
+    .hex-tooltip{display:none;position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:8px 10px;box-shadow:0 8px 20px oklch(0 0 0.4);z-index:3000;white-space:nowrap;pointer-events:none;font-size:12px;line-height:1.6;}
+    .hex-btn-wrap:hover .hex-tooltip{display:block;}
+    .hex-tooltip .tt-title{font-weight:600;color:var(--color-text);margin-bottom:2px;}
+    .hex-tooltip .tt-row{color:var(--color-text-muted);}
+    .hex-tooltip .tt-row span{color:var(--color-text);}
+    #theme-toggle{background:none;border:1px solid var(--color-border);border-radius:var(--radius-sm);color:var(--color-text);width:26px;height:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background var(--transition);flex-shrink:0;}
+    #theme-toggle:hover{background:var(--color-border);}
+    .leaflet-control-zoom{display:none;}
+    .leaflet-control-attribution{background:var(--color-surface)!important;color:var(--color-text-muted)!important;font-size:10px!important;}
+    #controls-br{position:fixed;bottom:12px;right:12px;z-index:1000;display:flex;flex-direction:column;gap:12px;align-items:center;}
+    #compass-wrapper{cursor:pointer;transition:transform 100ms.ease;position:relative;}
+    #compass-wrapper:hover{transform:scale(1.05);}
+    #compass{filter:drop-shadow(0 2px 8px oklch(0 0 0.3));}
+    #zoom-slider-wrapper{display:flex;flex-direction:column;align-items:center;background:var(--color-surface);border:1px solid var(--color-border);border-radius:var(--radius-md);padding:6px;box-shadow:0 2px 8px oklch(0 0 0.2);position:relative;}
+    #zoom-slider{width:24px;height:120px;accent-color:var(--color-primary);cursor:pointer;-webkit-appearance:slider-vertical;writing-mode:bt-lr;}
+    #zoom-slider::-webkit-slider-thumb{-webkit-appearance:slider-thumb;appearance:slider-thumb;width:20px;height:8px;border-radius:2px;background:var(--color-primary);border:none;cursor:pointer;}
+    .tooltip{position:absolute;background:var(--color-surface-2);color:var(--color-text);border:1px solid var(--color-border);border-radius:var(--radius-sm);padding:2px 6px;font-size:11px;white-space:nowrap;pointer-events:none;transform:translate(-50%, -4px);z-index:3000;}
+    .icon-btn{background:none;border:1px solid var(--color-border);border-radius:var(--radius-sm);width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);cursor:pointer;transition:background var(--transition),color var(--transition),border-color var(--transition);}
+    .icon-btn:hover{background:var(--color-border);color:var(--color-text);}
+    .icon-btn.active{color:var(--color-primary);border-color:var(--color-primary);}
+  </style>
 </head>
-<body>
-<div id="map"></div>
-<div id="ui">
-  <!-- Search -->
-  <div id="search-wrap">
-    <input id="search-input" type="text" placeholder="Search place…" autocomplete="off" spellcheck="false"/>
-    <div id="search-results"></div>
+<body data-debug="hex-dualgrid-refactored-tooltip">
+  <div id="map"></div>
+
+  <div id="ui">
+    <div id="search-wrap">
+      <input id="search-input" type="text" placeholder="Search place" autocomplete="off" spellcheck="false" />
+      <div id="search-results"></div>
+    </div>
+
+    <div class="ui-sep"></div>
+
+    <span class="ui-label">Map</span>
+    <button class="btn active" id="btn-street">Street</button>
+    <button class="btn" id="btn-satellite">Satellite</button>
+    <button class="btn" id="btn-topo">Topo</button>
+
+    <div classui-sep"></div>
+
+    <span class="ui-label">Hex</span>
+    <div id="hex-levels"></div>
+
+    <div class="ui-sep"></div>
+
+    <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-start;">
+      <span class="ui-label">Main</span>
+      <input type="range" id="hex-opacity-main" min="0.0" max="1" step="0.05" value="0.7" />
+      <span class="ui-label">Macro</span>
+      <input type="range" id="hex-opacity-macro" min="0.0" max="1" step="0.05" value="0.4" />
+    </div>
+
+    <button id="hex-toggle" class="icon-btn" title="Hide grid">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20C7 20 3.11 16.36 1 12c.86-1.72 2.01-3.26 3.39-4.58" />
+        <path d="M10.58 10.58A2 2 0 0 0 13.42 13.42" />
+        <path d="M1 1l22 22" />
+      </svg>
+    </button>
+
+    <div class="ui-sep"></div>
+
+    <button id="theme-toggle" title="Toggle theme"></button>
   </div>
-  <div class="ui-sep"></div>
-  <!-- Map layers -->
-  <span class="ui-label">Map</span>
-  <button class="btn active" id="btn-street">Street</button>
-  <button class="btn"        id="btn-satellite">Satellite</button>
-  <button class="btn"        id="btn-topo">Topo</button>
-  <div class="ui-sep"></div>
-  <!-- Hex levels -->
-  <span class="ui-label">Hex</span>
-  <div id="hex-levels"></div>
-  <div class="ui-sep"></div>
-  <!-- Opacity -->
-  <span class="ui-label">Opacity</span>
-  <input type="range" id="hex-opacity" min="0.05" max="1" step="0.05" value="0.55">
+
+  <div id="controls-br">
+    <div id="compass-wrapper" title="0°">
+      <svg id="compass" width="48" height="48" viewBox="0 0 48 48">
+        <circle cx="24" cy="24" r="22" fill="var(--color-surface-2)" stroke="var(--color-border)" stroke-width="1" />
+        <text x="24" y="8" text-anchor="middle" font-size="10" font-weight="600" fill="var(--color-text)">N</text>
+        <text x="40" y="27" text-anchor="middle" font-size="10" fill="var(--color-text-muted)">E</text>
+        <text x="24" y="42" text-anchor="middle" font-size="10" fill="var(--color-text-muted)">S</text>
+        <text x="8" y="27" text-anchor="middle" font-size="10" fill="var(--color-text-muted)">W</text>
+        <g id="compass-bearing" transform="rotate(0 24 24)">
+          <polygon points="24,10 20,22 24,20 28,22" fill="var(--color-primary)" />
+        </g>
+      </svg>
+    </div>
+
+    <div id="zoom-slider-wrapper">
+      <input type="range" id="zoom-slider" min="1" max="23" step="1" value="11" />
+      <div id="zoom-tooltip" class="tooltip"></div>
+    </div>
   </div>
-</div>
 
-<!-- Bottom-right controls: Compass + Zoom slider -->
-<div id="controls-br">
-  <div id="compass-wrapper">
-    <svg id="compass" width="48" height="48" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-      <!-- Rose background -->
-      <circle cx="24" cy="24" r="22" fill="var(--color-surface-2)" stroke="var(--color-border)" stroke-width="1"/>
-      <!-- Cardinal directions -->
-      <text x="24" y="8" text-anchor="middle" font-size="10" font-weight="600" fill="var(--color-text)">N</text>
-      <text x="40" y="27" text-anchor="middle" font-size="10" fill="var(--color-text-muted)">E</text>
-      <text x="24" y="42" text-anchor="middle" font-size="10" fill="var(--color-text-muted)">S</text>
-      <text x="8" y="27" text-anchor="middle" font-size="10" fill="var(--color-text-muted)">W</text>
-      <!-- Bearing indicator (rotates with map) -->
-      <g id="compass-bearing" transform="rotate(0 24 24)">
-        <polygon points="24,10 20,22 24,20 28,22" fill="var(--color-primary)"/>
-      </g>
-    </svg>
-  </div>
-  <div id="zoom-slider-wrapper">
-    <input type="range" id="zoom-slider" min="1" max="23" step="1" value="7" id="zoom-slider">
-  </div>
-</div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      // ================ CONFIG ================
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
-<script>
-document.addEventListener('DOMContentLoaded',()=>{
-const SQ3 = Math.sqrt(3);
-const BASE = 1e6;
+      const HEX_CONFIG = {
+        SQ3: Math.sqrt(3),
+        KM2_TO_M2: 1_000_000,
+        MAX_HEX_CELLS: 8000,
+        BOUNDS_PAD_FACTOR: 0.05,
+        MAIN_FILL_FACTOR: 0.10,
+        MACRO_FILL_FACTOR: 0.06,
+        INITIAL_VIEW: { lat: 43.55, lng: 10.30, zoom: 11 },
+        MAIN_OPACITY_DEFAULT: 0.7,
+        MACRO_OPACITY_DEFAULT: 0.4,
+        MIN_MOVE_REDRAW_METERS: 30
+      };
 
-// Revised examples — concrete, scale-appropriate
-const META = [
-  { area:'~1.5×1.5 m²',  dist:'~2 m',       example:'A table',           walk:'1 second' },
-  { area:'~8×8 m²',      dist:'~8 m',       example:'A large hut',       walk:'6 seconds' },
-  { area:'~40×40 m²',    dist:'~40 m',      example:'A city block',      walk:'30 seconds' },
-  { area:'~200×200 m²',  dist:'~200 m',     example:'Small village',     walk:'2.5 minutes' },
-  { area:'~1 km²',       dist:'~1 km',      example:'Urban neighborhood',walk:'12 minutes' },
-  { area:'~25 km²',      dist:'~5 km',      example:'Large city',        walk:'1 hour' },
-  { area:'~625 km²',     dist:'~25 km',     example:'Metropolitan area', walk:'6 hours' },
-  { area:'~15.626 km²',  dist:'~130 km',    example:'Small country',     walk:'1.5 days' },
-  { area:'~390.625 km²', dist:'~660 km',    example:'Large country',     walk:'1 week' },
-  { area:'~9.765.625 km²',dist:'~3.300 km', example:'Continent',         walk:'4 weeks' },
-];
+      const AREA_KM2 = [
+        1 / 390625,
+        1 / 15625,
+        1 / 625,
+        1 / 25,
+        1,
+        25,
+        625,
+        15625,
+        390625,
+        9765625
+      ];
 
-const LEVELS = Array.from({length:10},(_,i)=>{
-  const idx=i+1;
-  const areaSqM=BASE*Math.pow(25,idx-5);
-  const R=Math.sqrt(2*areaSqM/(3*SQ3));
-  return{idx,areaSqM,R,...META[i]};
-});
+      // numeri + esempi finali
+      const META = [
+        { area: "2.5 m²",        dist: "2 m",       walk: "1 second",      example: "A stone altar" },
+        { area: "64 m²",         dist: "10 m",      walk: "6 seconds",     example: "A cottage garden" },
+        { area: "1,600 m²",      dist: "50 m",      walk: "30 seconds",    example: "A market square" },
+        { area: "40,000 m²",     dist: "250 m",     walk: "3 minutes",     example: "A castle bailey" },
+        { area: "1 km²",         dist: "1 km",      walk: "15 minutes",    example: "A walled city" },
+        { area: "25 km²",        dist: "5 km",      walk: "1 hour",        example: "A city and its lands" },
+        { area: "625 km²",       dist: "30 km",     walk: "6 hours",       example: "A city-state domain" },
+        { area: "15,625 km²",    dist: "150 km",    walk: "30 hours",      example: "A duchy" },
+        { area: "390,625 km²",   dist: "800 km",    walk: "150 hours",     example: "A kingdom" },
+        { area: "9,765,625 km²", dist: "4,000 km",  walk: "800 hours",     example: "An empire" }
+      ];
 
-const levelsEl=document.getElementById('hex-levels');
-LEVELS.forEach(lv=>{
-  const wrap=document.createElement('div');
-  wrap.className='hex-btn-wrap';
-  const b=document.createElement('button');
-  b.className='hex-btn'+(lv.idx===5?' active':'');
-  b.textContent=lv.idx;
-  b.onclick=()=>selectLevel(lv.idx);
-  const tt=document.createElement('div');
-  tt.className='hex-tooltip';
-  tt.innerHTML=
-    `<div class="tt-title">L${lv.idx} — ${lv.example}</div>`+
-    `<div class="tt-row">▦ Area &nbsp;<span>${lv.area}</span></div>`+
-    `<div class="tt-row">↔ Spacing &nbsp;<span>${lv.dist}</span></div>`+
-    `<div class="tt-row">👣︎ Walking &nbsp;<span>${lv.walk}</span></div>`;
-  wrap.appendChild(b);wrap.appendChild(tt);
-  levelsEl.appendChild(wrap);
-});
+      const MAIN_BY_ZOOM = {
+        1: 10, 2: 10,
+        3: 9,  4: 9,
+        5: 8,  6: 8,
+        7: 7,  8: 7,
+        9: 6, 10: 6,
+        11: 5,12: 5,
+        13: 4,14: 4,15: 4,
+        16: 3,17: 3,
+        18: 2,19: 2,
+        20: 1,21: 1,22: 1,23: 1
+      };
 
-let currentLevel=5,hexOpacity=0.55,hexColor='#4f98a3';
+      // ================ APP STATE ================
 
-function selectLevel(idx){
-  currentLevel=idx;
-  document.querySelectorAll('.hex-btn').forEach((b,i)=>b.classList.toggle('active',i+1===idx));
-  redrawHex();
-}
+      const appState = {
+        map: null,
+        baseLayers: null,
+        currentBaseLayerKey: "street",
 
-// Wire up layer buttons
-document.getElementById('btn-street').addEventListener('click',()=>setLayer('street'));
-document.getElementById('btn-satellite').addEventListener('click',()=>setLayer('satellite'));
-document.getElementById('btn-topo').addEventListener('click',()=>setLayer('topo'));
+        levels: [],
+        mainLevel: 10,
+        macroLevel: 10,
 
-// ─── MAP ─────────────────────────────────────────────────────────────────────
-// Fallback se leaflet-rotate non è caricato correttamente
-if(typeof L.Map.prototype.getBearing !== 'function'){
-  L.Map.prototype.getBearing = function(){ return this._bearing || 0; };
-  L.Map.prototype.setBearing = function(b){ this._bearing = b; this.fire('rotate'); };
-}
+        mainOpacity: HEX_CONFIG.MAIN_OPACITY_DEFAULT,
+        macroOpacity: HEX_CONFIG.MACRO_OPACITY_DEFAULT,
+        gridHidden: false,
+        hexColor: "#4f98a3",
 
-const rotateSupported = typeof L.Map.prototype.setBearing === 'function';
+        isDarkTheme: true,
+        bearing: 0,
 
-const map=L.map('map',{
-  zoomControl:true,
-  preferCanvas:true,
-  maxZoom:23,
-  ...(rotateSupported ? {rotate:true, touchRotate:true, rotateControl:{closeOnZeroBearing:false}} : {})
-}).setView([44.7,10.3],7);
+        hexLayerMain: null,
+        hexLayerMacro: null,
 
-const layers={
-  street:    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-               {attribution:'© OpenStreetMap',maxZoom:23,maxNativeZoom:19}),
-  satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-               {attribution:'© Esri',maxZoom:23,maxNativeZoom:19}),
-  topo:      L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-               {attribution:'© OpenTopoMap',maxZoom:23,maxNativeZoom:17})
-};
-let currentLayerKey='street';
-layers.street.addTo(map);
+        redrawTimer: null,
+        lastRedrawCenter: null,
+        lastBoundsKey: null
+      };
 
-function setLayer(key){
-  if(key===currentLayerKey)return;
-  map.removeLayer(layers[currentLayerKey]);
-  layers[key].addTo(map);
-  currentLayerKey=key;
-  ['street','satellite','topo'].forEach(k=>
-    document.getElementById('btn-'+k).classList.toggle('active',k===key));
-}
+      // ================ HEX GRID ENGINE ================
 
-// ─── SEARCH ───────────────────────────────────────────────────────────────────
-let searchTimer=null;
-const searchInput=document.getElementById('search-input');
-const searchResultsEl=document.getElementById('search-results');
-searchInput.addEventListener('input',()=>{
-  clearTimeout(searchTimer);
-  const q=searchInput.value.trim();
-  if(q.length<3){searchResultsEl.style.display='none';return;}
-  searchTimer=setTimeout(()=>doSearch(q),350);
-});
-searchInput.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){searchResultsEl.style.display='none';searchInput.blur();}
-});
-document.addEventListener('click',e=>{
-  if(!document.getElementById('search-wrap').contains(e.target))
-    searchResultsEl.style.display='none';
-});
-async function doSearch(q){
-  try{
-    const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6`,
-      {headers:{'Accept-Language':'en'}});
-    renderResults(await r.json());
-  }catch(e){}
-}
-function renderResults(items){
-  searchResultsEl.innerHTML='';
-  if(!items.length){
-    searchResultsEl.innerHTML='<div class="search-item" style="color:var(--color-text-muted)">No results</div>';
-    searchResultsEl.style.display='block';return;
-  }
-  items.forEach(item=>{
-    const d=document.createElement('div');
-    d.className='search-item';
-    const name=item.name||item.display_name.split(',')[0];
-    const sub=item.display_name.split(',').slice(1,3).join(',').trim();
-    d.innerHTML=`<div>${name}</div><div class="sub">${sub}</div>`;
-    d.onclick=()=>{
-      const bb=item.boundingbox;
-      bb?map.fitBounds([[+bb[0],+bb[2]],[+bb[1],+bb[3]]],{maxZoom:14}):map.setView([+item.lat,+item.lon],13);
-      searchResultsEl.style.display='none';
-      searchInput.value=name;
-    };
-    searchResultsEl.appendChild(d);
-  });
-  searchResultsEl.style.display='block';
-}
+      function buildLevels() {
+        return AREA_KM2.map((aKm2, i) => {
+          const idx     = i + 1;
+          const areaSqM = aKm2 * HEX_CONFIG.KM2_TO_M2;
+          const R       = Math.sqrt((2 * areaSqM) / (3 * HEX_CONFIG.SQ3));
+          const meta    = META[i] || {};
+          return {
+            idx,
+            areaSqM,
+            aKm2,
+            R,
+            area:   meta.area,
+            dist:   meta.dist,
+            walk:   meta.walk,
+            example: meta.example
+          };
+        });
+      }
 
-// ─── ROTATION & COMPASS ──────────────────────────────────────────────────────
-function updateCompass(bearing){
-  document.getElementById('compass-bearing').setAttribute('transform',`rotate(${bearing} 24 24)`);
-}
-function resetRotation(){
-  map.setBearing(0);
-  updateCompass(0);
-  scheduleRedraw();
-}
-map.on('rotate',()=>updateCompass(map.getBearing()));
+      function zoomToMainLevel(z) {
+        const zi = Math.round(z);
+        const mapped = MAIN_BY_ZOOM[zi];
+        return mapped || 1;
+      }
 
-// ─── ZOOM SLIDER ─────────────────────────────────────────────────────────────
-const zoomSliderEl = document.getElementById('zoom-slider');
-zoomSliderEl.addEventListener('input', ()=>{ map.setZoom(parseInt(zoomSliderEl.value)); });
-map.on('zoomend',()=>{ zoomSliderEl.value = map.getZoom(); });
+      function mToLat(m) {
+        return m / 111320;
+      }
 
-// ─── KEYBOARD & MOUSE CONTROLS ───────────────────────────────────────────────
-// Ctrl+Wheel: rotate, Shift+Wheel: zoom ×2
-document.addEventListener('wheel',(e)=>{
-  if(e.ctrlKey){
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? 5 : -5;  // scroll down → rotate right (+)
-    const newBearing = map.getBearing() + delta;
-    map.setBearing(newBearing);
-    updateCompass(map.getBearing());
-    scheduleRedraw();
-  } else if(e.shiftKey){
-    e.preventDefault();
-    const currentZoom = map.getZoom();
-    const newZoom = e.deltaY > 0
-      ? Math.max(1, currentZoom - 2)
-      : Math.min(23, currentZoom + 2);
-    map.setZoom(newZoom);
-  }
-},{passive:false});
+      function mToLng(m, lat) {
+        return m / (111320 * Math.cos((lat * Math.PI) / 180));
+      }
 
-// Compass click to reset
-document.getElementById('compass-wrapper').addEventListener('click', resetRotation);
+      function computeHexCenters(bounds, R) {
+        const colW = HEX_CONFIG.SQ3 * R;
+        const rowH = 1.5 * R;
+        const c = bounds.getCenter();
+        const latH = mToLat(rowH);
+        const lngW = mToLng(colW, c.lat);
+        const padLat = mToLat(R * 2);
+        const padLng = mToLng(colW, c.lat);
 
-// ─── HEX GRID ─────────────────────────────────────────────────────────────────
-function mToLat(m){return m/111320;}
-function mToLng(m,lat){return m/(111320*Math.cos(lat*Math.PI/180));}
+        const minLat = bounds.getSouth() - padLat;
+        const maxLat = bounds.getNorth() + padLat;
+        const minLng = bounds.getWest() - padLng;
+        const maxLng = bounds.getEast() + padLng;
 
-function hexCenters(bounds,R){
-  const colW=SQ3*R,rowH=1.5*R;
-  const c=bounds.getCenter();
-  const latH=mToLat(rowH),lngW=mToLng(colW,c.lat);
-  const pad=mToLat(R*2),padL=mToLng(colW,c.lat);
-  const minLat=bounds.getSouth()-pad,maxLat=bounds.getNorth()+pad;
-  const minLng=bounds.getWest()-padL,maxLng=bounds.getEast()+padL;
-  const cols=Math.ceil((maxLng-minLng)/lngW)+1;
-  const rows=Math.ceil((maxLat-minLat)/latH)+1;
-  if(cols*rows>8000)return null;
-  const cs=[],lngHalf=lngW/2;
-  for(let row=0;row*latH<(maxLat-minLat)+latH;row++){
-    const lat=minLat+row*latH,off=(row%2===0)?0:lngHalf;
-    for(let col=0;col*lngW<(maxLng-minLng)+lngW;col++)
-      cs.push([lat,minLng+col*lngW+off]);
-  }
-  return cs;
-}
-function hexPts(lat,lng,R,latRef){
-  const latR=mToLat(R),lngR=mToLng(R,latRef),pts=[];
-  for(let i=0;i<6;i++){const a=(Math.PI/180)*(60*i+30);pts.push([lat+latR*Math.sin(a),lng+lngR*Math.cos(a)]);}
-  return pts;
-}
+        const cols = Math.ceil((maxLng - minLng) / lngW) + 1;
+        const rows = Math.ceil((maxLat - minLat) / latH) + 1;
+        if (cols * rows > HEX_CONFIG.MAX_HEX_CELLS) return null;
 
-let hexLayer=null;
-function redrawHex(){
-  if(hexLayer){map.removeLayer(hexLayer);hexLayer=null;}
-  const lv=LEVELS[currentLevel-1];
-  const bounds=map.getBounds();
-  const centers=hexCenters(bounds,lv.R);
-  if(!centers)return;
-  const latRef=bounds.getCenter().lat;
-  const polys=[],padded=bounds.pad(0.05);
-  centers.forEach(([lat,lng])=>{if(padded.contains([lat,lng]))polys.push(hexPts(lat,lng,lv.R,latRef));});
-  hexLayer=L.layerGroup([L.polygon(polys,{
-    color:hexColor,weight:1,opacity:hexOpacity,
-    fillColor:hexColor,fillOpacity:hexOpacity*0.08,interactive:false
-  })]).addTo(map);
-}
+        const centers = [];
+        const lngHalf = lngW / 2;
+        for (let row = 0; row * latH < maxLat - minLat + latH; row++) {
+          const lat = minLat + row * latH;
+          const offset = row % 2 === 0 ? 0 : lngHalf;
+          for (let col = 0; col * lngW < maxLng - minLng + lngW; col++) {
+            centers.push([lat, minLng + col * lngW + offset]);
+          }
+        }
+        return centers;
+      }
 
-let redrawTimer=null;
-function scheduleRedraw(){clearTimeout(redrawTimer);redrawTimer=setTimeout(redrawHex,120);}
+      function computeHexPolygon(lat, lng, R, latRef) {
+        const latR = mToLat(R);
+        const lngR = mToLng(R, latRef);
+        const pts = [];
+        for (let i = 0; i < 6; i++) {
+          const a = (Math.PI / 180) * (60 * i + 30);
+          pts.push([
+            lat + latR * Math.sin(a),
+            lng + lngR * Math.cos(a)
+          ]);
+        }
+        return pts;
+      }
 
-// Ctrl+Drag for rotation
-let dragStart=null,dragStartBearing=null;
-map.on('mousedown',(e)=>{
-  if(!e.originalEvent.ctrlKey) return;
-  dragStart = e.originalEvent.clientX;
-  dragStartBearing = map.getBearing();
-});
-document.addEventListener('mousemove',(e)=>{
-  if(dragStart === null || !e.ctrlKey){ if(dragStart!==null && !e.ctrlKey){ dragStart=null; } return; }
-  const delta = (e.clientX - dragStart) * 0.5;
-  map.setBearing(dragStartBearing + delta);
-  updateCompass(map.getBearing());
-  scheduleRedraw();
-});
-document.addEventListener('mouseup',()=>{
-  dragStart=null;
-  dragStartBearing=null;
-});
+      function buildHexLayerForLevel(levels, levelIdx, bounds, color, strokeOpacity, fillOpacity) {
+        const lv = levels[levelIdx - 1];
+        const centers = computeHexCenters(bounds, lv.R);
+        if (!centers) return null;
 
-map.on('moveend',scheduleRedraw);
-map.on('zoomend',scheduleRedraw);
+        const latRef = bounds.getCenter().lat;
+        const polys = [];
+        const padded = bounds.pad(HEX_CONFIG.BOUNDS_PAD_FACTOR);
 
-// ─── THEME ────────────────────────────────────────────────────────────────────
-let isDark=true;
-function toggleTheme(){
-  isDark=!isDark;
-  document.documentElement.setAttribute('data-theme',isDark?'dark':'light');
-  hexColor=isDark?'#4f98a3':'#01696f';
-  document.getElementById('theme-toggle').innerHTML=isDark
-    ?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
-    :'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>';
-  redrawHex();
-}
-function setOpacity(v){hexOpacity=parseFloat(v);redrawHex();}
-document.getElementById('hex-opacity').addEventListener('input', function(){ setOpacity(this.value); });
+        for (let i = 0; i < centers.length; i++) {
+          const lat = centers[i][0];
+          const lng = centers[i][1];
+          if (!padded.contains([lat, lng])) continue;
+          polys.push(computeHexPolygon(lat, lng, lv.R, latRef));
+        }
+        if (!polys.length) return null;
 
-// ─── INIT ─────────────────────────────────────────────────────────────────────
-redrawHex();
-});
-</script>
+        return L.layerGroup([
+          L.polygon(polys, {
+            color,
+            weight: 1,
+            opacity: strokeOpacity,
+            fillColor: color,
+            fillOpacity,
+            interactive: false
+          })
+        ]);
+      }
+
+      function boundsKey(bounds) {
+        const s = bounds.getSouth().toFixed(4);
+        const n = bounds.getNorth().toFixed(4);
+        const w = bounds.getWest().toFixed(4);
+        const e = bounds.getEast().toFixed(4);
+        return `${s},${w},${n},${e}`;
+      }
+
+      function distanceMeters(a, b) {
+        const R = 6371000;
+        const lat1 = a.lat * Math.PI / 180;
+        const lat2 = b.lat * Math.PI / 180;
+        const dLat = (b.lat - a.lat) * Math.PI / 180;
+        const dLng = (b.lng - a.lng) * Math.PI / 180;
+        const sinDLat = Math.sin(dLat / 2);
+        const sinDLng = Math.sin(dLng / 2);
+        const aa = sinDLat * sinDLat +
+          Math.cos(lat1) * Math.cos(lat2) *
+          sinDLng * sinDLng;
+        const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+        return R * c;
+      }
+
+      // ================ INIT LEVELS + TOOLTIP ================
+
+      const LEVELS = buildLevels();
+      appState.levels = LEVELS;
+
+      const levelsEl = document.getElementById("hex-levels");
+      LEVELS.forEach((lv) => {
+        const wrap = document.createElement("div");
+        wrap.className = "hex-btn-wrap";
+
+        const b = document.createElement("button");
+        b.className = "hex-btn";
+        b.textContent = lv.idx;
+        wrap.appendChild(b);
+
+        const tt = document.createElement("div");
+        tt.className = "hex-tooltip";
+        tt.innerHTML = `
+          <div class="tt-title">L${lv.idx} – ${lv.example}</div>
+          <div class="tt-row">Area ⬢️&nbsp;<span>${lv.area}</span></div>
+          <div class="tt-row">Length ↔&nbsp;<span>${lv.dist}</span></div>
+          <div class="tt-row">Travel 👣︎&nbsp;<span>${lv.walk}</span></div>
+        `;
+        wrap.appendChild(tt);
+
+        levelsEl.appendChild(wrap);
+      });
+
+      // ================ MAPPA LEAFLET ================
+
+      if (typeof L.Map.prototype.getBearing !== "function") {
+        L.Map.prototype.getBearing = function () {
+          return this.bearing || 0;
+        };
+        L.Map.prototype.setBearing = function (b) {
+          this.bearing = b;
+          this.fire("rotate");
+        };
+      }
+      const rotateSupported = typeof L.Map.prototype.setBearing === "function";
+
+      const map = L.map("map", {
+        zoomControl: true,
+        preferCanvas: true,
+        maxZoom: 23,
+        ...(rotateSupported ? { rotate: true, touchRotate: true, rotateControl: false } : {})
+      }).setView(
+        [HEX_CONFIG.INITIAL_VIEW.lat, HEX_CONFIG.INITIAL_VIEW.lng],
+        HEX_CONFIG.INITIAL_VIEW.zoom
+      );
+      appState.map = map;
+
+      const baseLayers = {
+        street: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "OpenStreetMap",
+          maxZoom: 23,
+          maxNativeZoom: 19
+        }),
+        satellite: L.tileLayer(
+          "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+          {
+            attribution: "Esri",
+            maxZoom: 23,
+            maxNativeZoom: 19
+          }
+        ),
+        topo: L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
+          attribution: "OpenTopoMap",
+          maxZoom: 23,
+          maxNativeZoom: 17
+        })
+      };
+      appState.baseLayers = baseLayers;
+
+      baseLayers.street.addTo(map);
+
+      // ================ APP FUNCS ================
+
+      function setBaseLayer(key) {
+        if (key === appState.currentBaseLayerKey) return;
+        map.removeLayer(appState.baseLayers[appState.currentBaseLayerKey]);
+        appState.baseLayers[key].addTo(map);
+        appState.currentBaseLayerKey = key;
+        ["street", "satellite", "topo"].forEach((k) => {
+          document
+            .getElementById("btn-" + k)
+            .classList.toggle("active", k === key);
+        });
+      }
+
+      function clearHexLayers() {
+        if (appState.hexLayerMain) {
+          map.removeLayer(appState.hexLayerMain);
+          appState.hexLayerMain = null;
+        }
+        if (appState.hexLayerMacro) {
+          map.removeLayer(appState.hexLayerMacro);
+          appState.hexLayerMacro = null;
+        }
+      }
+
+      function updateLevelsFromZoom() {
+        const z = map.getZoom();
+        appState.mainLevel = zoomToMainLevel(z);
+        appState.macroLevel = Math.min(
+          appState.mainLevel + 1,
+          appState.levels.length
+        );
+        const buttons = document.querySelectorAll(".hex-btn");
+        buttons.forEach((b, i) => {
+          b.classList.toggle("active", i + 1 === appState.mainLevel);
+        });
+      }
+
+      function redrawHex() {
+        clearHexLayers();
+        if (
+          appState.gridHidden ||
+          (appState.mainOpacity <= 0 && appState.macroOpacity <= 0)
+        ) return;
+
+        const bounds = map.getBounds();
+        const color = appState.hexColor;
+
+        if (appState.mainOpacity > 0) {
+          const layerMain = buildHexLayerForLevel(
+            appState.levels,
+            appState.mainLevel,
+            bounds,
+            color,
+            appState.mainOpacity,
+            appState.mainOpacity * HEX_CONFIG.MAIN_FILL_FACTOR
+          );
+          if (layerMain) {
+            appState.hexLayerMain = layerMain.addTo(map);
+          }
+        }
+
+        if (
+          appState.macroLevel &&
+          appState.macroLevel !== appState.mainLevel &&
+          appState.macroOpacity > 0
+        ) {
+          const layerMacro = buildHexLayerForLevel(
+            appState.levels,
+            appState.macroLevel,
+            bounds,
+            color,
+            appState.macroOpacity,
+            appState.macroOpacity * HEX_CONFIG.MACRO_FILL_FACTOR
+          );
+          if (layerMacro) {
+            appState.hexLayerMacro = layerMacro.addTo(map);
+          }
+        }
+
+        appState.lastBoundsKey = boundsKey(bounds);
+        appState.lastRedrawCenter = map.getCenter();
+      }
+
+      function shouldRedrawForMove() {
+        if (!appState.lastRedrawCenter) return true;
+        const currentCenter = map.getCenter();
+        const d = distanceMeters(
+          { lat: currentCenter.lat, lng: currentCenter.lng },
+          { lat: appState.lastRedrawCenter.lat, lng: appState.lastRedrawCenter.lng }
+        );
+        return d >= HEX_CONFIG.MIN_MOVE_REDRAW_METERS;
+      }
+
+      function scheduleRedraw() {
+        clearTimeout(appState.redrawTimer);
+        appState.redrawTimer = setTimeout(() => {
+          const currentBounds = map.getBounds();
+          const key = boundsKey(currentBounds);
+          if (key === appState.lastBoundsKey && !shouldRedrawForMove()) return;
+          redrawHex();
+        }, 120);
+      }
+
+      function updateCompass(bearing) {
+        const deg = Math.round(bearing);
+        appState.bearing = deg;
+        document
+          .getElementById("compass-bearing")
+          .setAttribute("transform", `rotate(${deg} 24 24)`);
+        document.getElementById("compass-wrapper").title = `${deg}°`;
+      }
+
+      function resetRotation() {
+        map.setBearing(0);
+        updateCompass(0);
+        scheduleRedraw();
+      }
+
+      // ================ SEARCH ================
+
+      let searchTimer = null;
+      const searchInput = document.getElementById("search-input");
+      const searchResultsEl = document.getElementById("search-results");
+
+      searchInput.addEventListener("input", () => {
+        clearTimeout(searchTimer);
+        const q = searchInput.value.trim();
+        if (q.length < 3) {
+          searchResultsEl.style.display = "none";
+          return;
+        }
+        searchTimer = setTimeout(() => doSearch(q), 350);
+      });
+
+      searchInput.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          searchResultsEl.style.display = "none";
+          searchInput.blur();
+        }
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!document.getElementById("search-wrap").contains(e.target)) {
+          searchResultsEl.style.display = "none";
+        }
+      });
+
+      async function doSearch(q) {
+        try {
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+              q
+            )}&format=json&limit=6`,
+            { headers: { "Accept-Language": "en" } }
+          );
+          renderResults(await r.json());
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      function renderResults(items) {
+        searchResultsEl.innerHTML = "";
+        if (!items.length) {
+          searchResultsEl.innerHTML =
+            '<div class="search-item" style="color:var(--color-text-muted)">No results</div>';
+          searchResultsEl.style.display = "block";
+          return;
+        }
+        items.forEach((item) => {
+          const d = document.createElement("div");
+          d.className = "search-item";
+          const name = item.name || item.display_name.split(",")[0];
+          const sub = item.display_name.split(",").slice(1, 3).join(",").trim();
+          d.innerHTML = `<div>${name}</div><div class="sub">${sub}</div>`;
+          d.onclick = () => {
+            const bb = item.boundingbox;
+            if (bb) {
+              map.fitBounds(
+                [
+                  [bb[0], bb[2]],
+                  [bb[1], bb[3]]
+                ],
+                { maxZoom: 14 }
+              );
+              map.setView([item.lat, item.lon], 13);
+            } else {
+              map.setView([item.lat, item.lon], 13);
+            }
+            searchResultsEl.style.display = "none";
+            searchInput.value = name;
+          };
+          searchResultsEl.appendChild(d);
+        });
+        searchResultsEl.style.display = "block";
+      }
+
+      // ================ COMPASS + ZOOM SLIDER ================
+
+      document
+        .getElementById("compass-wrapper")
+        .addEventListener("click", resetRotation);
+
+      map.on("rotate", () => {
+        const v = map.getBearing();
+        updateCompass(v);
+      });
+
+      const zoomSliderEl = document.getElementById("zoom-slider");
+      const zoomTooltip = document.getElementById("zoom-tooltip");
+      const zoomMax = parseInt(zoomSliderEl.max, 10);
+
+      function updateZoomTooltip() {
+        if (!zoomTooltip) return;
+        const z = map.getZoom();
+        zoomTooltip.textContent = `${z}/${zoomMax}`;
+      }
+
+      zoomSliderEl.addEventListener("input", () => {
+        const z = parseInt(zoomSliderEl.value, 10);
+        map.setZoom(z);
+        updateZoomTooltip();
+        zoomTooltip.style.display = "block";
+      });
+
+      zoomSliderEl.addEventListener("mouseover", () => {
+        updateZoomTooltip();
+        zoomTooltip.style.display = "block";
+      });
+
+      zoomSliderEl.addEventListener("mouseout", () => {
+        zoomTooltip.style.display = "none";
+      });
+
+      // ================ MAP ↔ HEX INTERACTION ================
+
+      map.on("moveend", () => {
+        if (shouldRedrawForMove()) {
+          scheduleRedraw();
+        }
+      });
+
+      map.on("zoomend", () => {
+        zoomSliderEl.value = map.getZoom();
+        updateZoomTooltip();
+        updateLevelsFromZoom();
+        scheduleRedraw();
+      });
+
+      // ================ ROTATION (MIDDLE MOUSE) ================
+
+      let dragRotateStart = null;
+      let dragRotateStartBearing = null;
+      let dragRotateActive = false;
+
+      const mapEl = map.getContainer();
+
+      mapEl.addEventListener("mousedown", (e) => {
+        if (e.button !== 1) return;
+        e.preventDefault();
+        dragRotateStart = e.clientX;
+        dragRotateStartBearing = map.getBearing();
+        dragRotateActive = true;
+      });
+
+      document.addEventListener("mousemove", (e) => {
+        if (!dragRotateActive) return;
+        const delta = (e.clientX - dragRotateStart) * 0.5;
+        map.setBearing(dragRotateStartBearing + delta);
+        updateCompass(map.getBearing());
+        scheduleRedraw();
+      });
+
+      document.addEventListener("mouseup", () => {
+        dragRotateStart = null;
+        dragRotateStartBearing = null;
+        dragRotateActive = false;
+      });
+
+      mapEl.addEventListener("auxclick", (e) => {
+        if (e.button === 1) e.preventDefault();
+      });
+
+      // ================ THEME ================
+
+      function applyTheme(isDark) {
+        appState.isDarkTheme = isDark;
+        document.documentElement.setAttribute(
+          "data-theme",
+          isDark ? "dark" : "light"
+        );
+        appState.hexColor = isDark ? "#4f98a3" : "#01696f";
+        document.getElementById("theme-toggle").innerHTML = isDark
+          ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
+          : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>';
+        redrawHex();
+      }
+
+      applyTheme(true);
+      document
+        .getElementById("theme-toggle")
+        .addEventListener("click", () => applyTheme(!appState.isDarkTheme));
+
+      // ================ BASE MAP CONTROLS ================
+
+      document
+        .getElementById("btn-street")
+        .addEventListener("click", () => setBaseLayer("street"));
+      document
+        .getElementById("btn-satellite")
+        .addEventListener("click", () => setBaseLayer("satellite"));
+      document
+        .getElementById("btn-topo")
+        .addEventListener("click", () => setBaseLayer("topo"));
+
+      // ================ OPACITY + HIDE ================
+
+      const mainOpacitySlider  = document.getElementById("hex-opacity-main");
+      const macroOpacitySlider = document.getElementById("hex-opacity-macro");
+
+      mainOpacitySlider.addEventListener("input", () => {
+        appState.mainOpacity = parseFloat(mainOpacitySlider.value);
+        redrawHex();
+      });
+
+      macroOpacitySlider.addEventListener("input", () => {
+        appState.macroOpacity = parseFloat(macroOpacitySlider.value);
+        redrawHex();
+      });
+
+      const hexToggleBtn = document.getElementById("hex-toggle");
+      hexToggleBtn.addEventListener("click", () => {
+        appState.gridHidden = !appState.gridHidden;
+        hexToggleBtn.classList.toggle("active", appState.gridHidden);
+        hexToggleBtn.title = appState.gridHidden ? "Show grid" : "Hide grid";
+        redrawHex();
+      });
+
+      // ================ INIT ================
+
+      zoomSliderEl.value = map.getZoom();
+      updateZoomTooltip();
+      updateLevelsFromZoom();
+      redrawHex();
+      updateCompass(0);
+    });
+  </script>
 </body>
 </html>
