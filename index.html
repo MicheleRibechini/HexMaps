@@ -123,7 +123,7 @@
 
     <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-start;">
       <span class="ui-label">Main</span>
-      <input type="range" id="hex-opacity-main" min="0.0" max="1" step="0.05" value="0.5" />
+      <input type="range" id="hex-opacity-main" min="0.0" max="1" step="0.05" value="0.25" />
       <span class="ui-label">Macro</span>
       <input type="range" id="hex-opacity-macro" min="0.0" max="1" step="0.05" value="1" />
     </div>
@@ -171,23 +171,23 @@
   <script src="https://unpkg.com/leaflet-rotate@0.2.8/dist/leaflet-rotate-src.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", () => {
-      // ================ CONFIG ================
+      // ================ CONFIG =================
 
       const HEX_CONFIG = {
         SQ3: Math.sqrt(3),
         KM2_TO_M2: 1_000_000,
-        MAX_HEX_CELLS: 8000,
+        MAX_MAIN_HEX: 4000,
+        MAX_MACRO_HEX: 1500,
         BOUNDS_PAD_FACTOR: 0.05,
         MAIN_FILL_FACTOR: 0.10,
         MACRO_FILL_FACTOR: 0.06,
         INITIAL_VIEW: { lat: 43.551654, lng: 10.308465, zoom: 11 },
-        MAIN_OPACITY_DEFAULT: 0.5,
+        MAIN_OPACITY_DEFAULT: 0.25,
         MACRO_OPACITY_DEFAULT: 1.0,
-        MIN_MOVE_REDRAW_METERS: 30
+        MIN_MOVE_REDRAW_METERS: 40
       };
 
-      // origine globale della griglia (mutabile via context menu)
-      const GRID_ORIGIN = { lat: 43.551654, lng: 10.308465 };
+      const GRID_ORIGIN_DEFAULT = { lat: 43.551654, lng: 10.308465 };
 
       const AREA_KM2 = [
         1 / 390625,
@@ -241,7 +241,7 @@
         23: 1
       };
 
-      // ================ APP STATE ================
+      // ================ APP STATE =================
 
       const appState = {
         map: null,
@@ -267,10 +267,15 @@
         lastRedrawCenter: null,
         lastBoundsKey: null,
 
-        lastContextLatLng: null
+        lastContextLatLng: null,
+
+        gridOriginLat: GRID_ORIGIN_DEFAULT.lat,
+        gridOriginLng: GRID_ORIGIN_DEFAULT.lng,
+
+        gridCache: {} // per livello: { "q,r" -> {lat,lng} }
       };
 
-      // ================ HELPER METRICI ================
+      // ================ HELPER METRICI =================
 
       function mToLat(m) {
         return m / 111320;
@@ -295,25 +300,25 @@
         return R * c;
       }
 
-      // ================ HEX GRID ENGINE (FISSO) ================
+      // ================ MODELLO GRIGLIA =================
+
+      function makeLevel(idx, areaKm2, meta) {
+        const areaSqM = areaKm2 * HEX_CONFIG.KM2_TO_M2;
+        const R       = Math.sqrt((2 * areaSqM) / (3 * HEX_CONFIG.SQ3));
+        return {
+          idx,
+          areaSqM,
+          aKm2: areaKm2,
+          R,
+          area:    meta.area,
+          dist:    meta.dist,
+          walk:    meta.walk,
+          example: meta.example
+        };
+      }
 
       function buildLevels() {
-        return AREA_KM2.map((aKm2, i) => {
-          const idx     = i + 1;
-          const areaSqM = aKm2 * HEX_CONFIG.KM2_TO_M2;
-          const R       = Math.sqrt((2 * areaSqM) / (3 * HEX_CONFIG.SQ3));
-          const meta    = META[i] || {};
-          return {
-            idx,
-            areaSqM,
-            aKm2,
-            R,
-            area:    meta.area,
-            dist:    meta.dist,
-            walk:    meta.walk,
-            example: meta.example
-          };
-        });
+        return AREA_KM2.map((aKm2, i) => makeLevel(i + 1, aKm2, META[i] || {}));
       }
 
       function zoomToMainLevel(z) {
@@ -330,8 +335,8 @@
       }
 
       function metersToLatLng(x, y) {
-        const lat = GRID_ORIGIN.lat + mToLat(y);
-        const lng = GRID_ORIGIN.lng + mToLng(x, GRID_ORIGIN.lat);
+        const lat = appState.gridOriginLat + mToLat(y);
+        const lng = appState.gridOriginLng + mToLng(x, appState.gridOriginLat);
         return { lat, lng };
       }
 
@@ -340,7 +345,22 @@
         return metersToLatLng(x, y);
       }
 
-      function estimateGridRangeForBounds(level, bounds) {
+      function getGridLatLng(level, q, r) {
+        const levelKey = level.idx;
+        if (!appState.gridCache[levelKey]) {
+          appState.gridCache[levelKey] = new Map();
+        }
+        const cache = appState.gridCache[levelKey];
+        const key = q + "," + r;
+        let pt = cache.get(key);
+        if (!pt) {
+          pt = gridToLatLng(level, q, r);
+          cache.set(key, pt);
+        }
+        return pt;
+      }
+
+      function estimateGridRangeForBounds(level, bounds, maxCells) {
         const R = level.R;
 
         const corners = [
@@ -354,8 +374,8 @@
         const ys = [];
 
         corners.forEach(c => {
-          const dy = (c.lat - GRID_ORIGIN.lat) * 111320;
-          const dx = (c.lng - GRID_ORIGIN.lng) * 111320 * Math.cos(GRID_ORIGIN.lat * Math.PI / 180);
+          const dy = (c.lat - appState.gridOriginLat) * 111320;
+          const dx = (c.lng - appState.gridOriginLng) * 111320 * Math.cos(appState.gridOriginLat * Math.PI / 180);
           xs.push(dx);
           ys.push(dy);
         });
@@ -386,18 +406,25 @@
         let rMin = Math.min(...rs) - 2;
         let rMax = Math.max(...rs) + 2;
 
-        const spanQ = qMax - qMin + 1;
-        const spanR = rMax - rMin + 1;
-        if (spanQ * spanR > HEX_CONFIG.MAX_HEX_CELLS) {
-          const factor = Math.sqrt(HEX_CONFIG.MAX_HEX_CELLS / (spanQ * spanR));
-          const shrinkQ = Math.max(1, Math.floor(spanQ * (1 - factor) / 2));
-          const shrinkR = Math.max(1, Math.floor(spanR * (1 - factor) / 2));
+        let spanQ = qMax - qMin + 1;
+        let spanR = rMax - rMin + 1;
+
+        if (spanQ * spanR > maxCells) {
+          const factor = Math.sqrt(maxCells / (spanQ * spanR));
+          const targetQ = Math.max(1, Math.floor(spanQ * factor));
+          const targetR = Math.max(1, Math.floor(spanR * factor));
+          const shrinkQ = Math.floor((spanQ - targetQ) / 2);
+          const shrinkR = Math.floor((spanR - targetR) / 2);
           qMin += shrinkQ; qMax -= shrinkQ;
           rMin += shrinkR; rMax -= shrinkR;
+          spanQ = qMax - qMin + 1;
+          spanR = rMax - rMin + 1;
         }
 
-        return { qMin, qMax, rMin, rMax };
+        return { qMin, qMax, rMin, rMax, spanQ, spanR };
       }
+
+      // ================ RENDERING HEX =================
 
       function computeHexPolygon(lat, lng, R, latRef) {
         const latR = mToLat(R);
@@ -413,20 +440,18 @@
         return pts;
       }
 
-      function buildHexLayerForLevel(levels, levelIdx, bounds, color, strokeOpacity, fillOpacity) {
-        const lv = levels[levelIdx - 1];
+      function buildHexLayerForLevel(level, bounds, color, strokeOpacity, fillOpacity, maxCells) {
         const padded = bounds.pad(HEX_CONFIG.BOUNDS_PAD_FACTOR);
-        const { qMin, qMax, rMin, rMax } = estimateGridRangeForBounds(lv, padded);
+        const { qMin, qMax, rMin, rMax } = estimateGridRangeForBounds(level, padded, maxCells);
 
         const polys = [];
-        const latRef = GRID_ORIGIN.lat;
+        const latRef = appState.gridOriginLat;
 
         for (let q = qMin; q <= qMax; q++) {
           for (let r = rMin; r <= rMax; r++) {
-            const { lat, lng } = gridToLatLng(lv, q, r);
+            const { lat, lng } = getGridLatLng(level, q, r);
             if (!padded.contains([lat, lng])) continue;
-            const poly = computeHexPolygon(lat, lng, lv.R, latRef);
-            polys.push(poly);
+            polys.push(computeHexPolygon(lat, lng, level.R, latRef));
           }
         }
 
@@ -452,7 +477,7 @@
         return `${s},${w},${n},${e}`;
       }
 
-      // ================ INIT LEVELS + TOOLTIP ================
+      // ================ INIT LEVELS + TOOLTIP =================
 
       const LEVELS = buildLevels();
       appState.levels = LEVELS;
@@ -480,7 +505,7 @@
         levelsEl.appendChild(wrap);
       });
 
-      // ================ MAPPA LEAFLET ================
+      // ================ MAPPA LEAFLET =================
 
       if (typeof L.Map.prototype.getBearing !== "function") {
         L.Map.prototype.getBearing = function () {
@@ -528,7 +553,7 @@
 
       baseLayers.street.addTo(map);
 
-      // ================ APP FUNCS ================
+      // ================ FUNZIONI APP =================
 
       function setBaseLayer(key) {
         if (key === appState.currentBaseLayerKey) return;
@@ -578,12 +603,12 @@
 
         if (appState.mainOpacity > 0) {
           const layerMain = buildHexLayerForLevel(
-            appState.levels,
-            appState.mainLevel,
+            appState.levels[appState.mainLevel - 1],
             bounds,
             color,
             appState.mainOpacity,
-            appState.mainOpacity * HEX_CONFIG.MAIN_FILL_FACTOR
+            appState.mainOpacity * HEX_CONFIG.MAIN_FILL_FACTOR,
+            HEX_CONFIG.MAX_MAIN_HEX
           );
           if (layerMain) {
             appState.hexLayerMain = layerMain.addTo(map);
@@ -596,12 +621,12 @@
           appState.macroOpacity > 0
         ) {
           const layerMacro = buildHexLayerForLevel(
-            appState.levels,
-            appState.macroLevel,
+            appState.levels[appState.macroLevel - 1],
             bounds,
             color,
             appState.macroOpacity,
-            appState.macroOpacity * HEX_CONFIG.MACRO_FILL_FACTOR
+            appState.macroOpacity * HEX_CONFIG.MACRO_FILL_FACTOR,
+            HEX_CONFIG.MAX_MACRO_HEX
           );
           if (layerMacro) {
             appState.hexLayerMacro = layerMacro.addTo(map);
@@ -629,7 +654,12 @@
           const key = boundsKey(currentBounds);
           if (key === appState.lastBoundsKey && !shouldRedrawForMove()) return;
           redrawHex();
-        }, 120);
+        }, 140);
+      }
+
+      function updateGridForViewChange() {
+        updateLevelsFromZoom();
+        scheduleRedraw();
       }
 
       function updateCompass(bearing) {
@@ -647,7 +677,7 @@
         scheduleRedraw();
       }
 
-      // ================ SEARCH ================
+      // ================ SEARCH =================
 
       let searchTimer = null;
       const searchInput = document.getElementById("search-input");
@@ -726,7 +756,7 @@
         searchResultsEl.style.display = "block";
       }
 
-      // ================ COMPASS + ZOOM SLIDER ================
+      // ================ COMPASS + ZOOM SLIDER =================
 
       const compassWrapper = document.getElementById("compass-wrapper");
       compassWrapper.addEventListener("click", resetRotation);
@@ -784,7 +814,7 @@
         scheduleRedraw();
       }, { passive: false });
 
-      // ================ MAP ↔ HEX INTERACTION ================
+      // ================ MAP ↔ HEX INTERACTION =================
 
       map.on("moveend", () => {
         if (shouldRedrawForMove()) {
@@ -794,12 +824,10 @@
 
       map.on("zoomend", () => {
         zoomSliderEl.value = map.getZoom();
-        updateZoomTooltip();
-        updateLevelsFromZoom();
-        scheduleRedraw();
+        updateGridForViewChange();
       });
 
-      // ================ ROTATION (MIDDLE MOUSE) ================
+      // ================ ROTATION (MIDDLE MOUSE) =================
 
       let dragRotateStart = null;
       let dragRotateStartBearing = null;
@@ -833,7 +861,7 @@
         if (e.button === 1) e.preventDefault();
       });
 
-      // ================ THEME ================
+      // ================ THEME =================
 
       function applyTheme(isDark) {
         appState.isDarkTheme = isDark;
@@ -853,7 +881,7 @@
         .getElementById("theme-toggle")
         .addEventListener("click", () => applyTheme(!appState.isDarkTheme));
 
-      // ================ BASE MAP CONTROLS ================
+      // ================ BASE MAP CONTROLS =================
 
       document
         .getElementById("btn-street")
@@ -865,10 +893,13 @@
         .getElementById("btn-topo")
         .addEventListener("click", () => setBaseLayer("topo"));
 
-      // ================ OPACITY + HIDE ================
+      // ================ OPACITY + HIDE =================
 
       const mainOpacitySlider  = document.getElementById("hex-opacity-main");
       const macroOpacitySlider = document.getElementById("hex-opacity-macro");
+
+      mainOpacitySlider.value  = HEX_CONFIG.MAIN_OPACITY_DEFAULT;
+      macroOpacitySlider.value = HEX_CONFIG.MACRO_OPACITY_DEFAULT;
 
       mainOpacitySlider.addEventListener("input", () => {
         appState.mainOpacity = parseFloat(mainOpacitySlider.value);
@@ -888,7 +919,7 @@
         redrawHex();
       });
 
-      // ================ CONTEXT MENU ================
+      // ================ CONTEXT MENU =================
 
       const contextMenu = document.getElementById("context-menu");
 
@@ -904,6 +935,7 @@
       }
 
       mapEl.addEventListener("contextmenu", (e) => {
+        if (document.getElementById("ui").contains(e.target)) return;
         e.preventDefault();
         const containerPoint = map.mouseEventToContainerPoint(e);
         const latlng = map.containerPointToLatLng(containerPoint);
@@ -930,15 +962,16 @@
             // ignore
           }
         } else if (action === "set-origin") {
-          GRID_ORIGIN.lat = lat;
-          GRID_ORIGIN.lng = lng;
+          appState.gridOriginLat = lat;
+          appState.gridOriginLng = lng;
+          appState.gridCache = {}; // invalida cache centri
           redrawHex();
         }
 
         hideContextMenu();
       });
 
-      // ================ INIT ================
+      // ================ INIT =================
 
       zoomSliderEl.value = map.getZoom();
       updateZoomTooltip();
