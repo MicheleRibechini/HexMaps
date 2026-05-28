@@ -80,7 +80,7 @@
       border-radius: var(--radius-md);
       box-shadow: 0 4px 16px oklch(0 0 0.4);
       z-index: 4000;
-      min-width: 160px;
+      min-width: 180px;
       font-size: 13px;
       color: var(--color-text);
     }
@@ -88,11 +88,16 @@
       padding: 6px 10px;
       cursor: pointer;
       border-bottom: 1px solid var(--color-border);
+      opacity: 1;
     }
     #context-menu .item:last-child {
       border-bottom: none;
     }
-    #context-menu .item:hover {
+    #context-menu .item.disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    #context-menu .item:hover:not(.disabled) {
       background: var(--color-surface-2);
     }
 
@@ -116,9 +121,15 @@
       white-space: nowrap;
       box-shadow: 0 2px 8px rgba(0,0,0,0.7);
       transform: translate(-50%, -50%);
+      pointer-events: auto;
     }
 
-    .route-waypoint {
+    .route-waypoint-icon {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid #000;
+      background: #ffffff;
       box-shadow: 0 0 6px rgba(0,0,0,0.7);
     }
   </style>
@@ -185,11 +196,11 @@
   </div>
 
   <div id="context-menu">
+    <div class="item" data-action="route-start">Start route here</div>
+    <div class="item disabled" data-action="route-add">Add route waypoint</div>
+    <div class="item disabled" data-action="route-clear">Clear route</div>
     <div class="item" data-action="copy">Copy coordinates</div>
     <div class="item" data-action="set-origin">Set as Center</div>
-    <div class="item" data-action="route-start">Start route here</div>
-    <div class="item" data-action="route-end">End route here</div>
-    <div class="item" data-action="route-clear">Clear route</div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -211,6 +222,35 @@
       };
 
       const GRID_ORIGIN_DEFAULT = { lat: 43.551654, lng: 10.308465 };
+
+      // --- conversioni base, UNA SOLA VOLTA ---
+      function mToLat(m) { return m / 111320; }
+      function mToLng(m, lat) { return m / (111320 * Math.cos((lat * Math.PI) / 180)); }
+      function metersToLatLng(x, y) {
+        const lat = appState.gridOriginLat + mToLat(y);
+        const lng = appState.gridOriginLng + mToLng(x, appState.gridOriginLat);
+        return { lat, lng };
+      }
+      function latLngToMeters(lat, lng) {
+        const dy = (lat - appState.gridOriginLat) * 111320;
+        const dx = (lng - appState.gridOriginLng) * 111320 * Math.cos(appState.gridOriginLat * Math.PI / 180);
+        return { x: dx, y: dy };
+      }
+
+      function distanceMeters(a, b) {
+        const R = 6371000;
+        const lat1 = a.lat * Math.PI / 180;
+        const lat2 = b.lat * Math.PI / 180;
+        const dLat = (b.lat - a.lat) * Math.PI / 180;
+        const dLng = (b.lng - a.lng) * Math.PI / 180;
+        const sinDLat = Math.sin(dLat / 2);
+        const sinDLng = Math.sin(dLng / 2);
+        const aa = sinDLat * sinDLat +
+          Math.cos(lat1) * Math.cos(lat2) *
+          sinDLng * sinDLng;
+        const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+        return R * c;
+      }
 
       const AREA_KM2 = [
         1 / 390625,
@@ -296,6 +336,23 @@
         }
       ];
 
+      const PACE_ORDER = ['slow', 'normal', 'fast'];
+      const PACE_LABEL = {
+        slow: 'Slow',
+        normal: 'Medium',
+        fast: 'Fast'
+      };
+      const PACE_SPEED = {
+        slow: 3,
+        normal: 5,
+        fast: 7
+      };
+      const PACE_COLOR = {
+        slow: '#ef4444',    // rosso
+        normal: '#ffffff',  // bianco
+        fast: '#22c55e'     // verde
+      };
+
       const appState = {
         map: null,
         baseLayers: null,
@@ -328,36 +385,12 @@
         gridCache: {},
 
         route: {
-          startHex: null,
-          endHex: null,
-          hexes: [],
-          polylineMain: null,
-          polylineOutline: null,
-          summaryMarker: null,
-          startWaypoint: null,
-          endWaypoint: null,
-          startLatLngOriginal: null,
-          endLatLngOriginal: null,
-          _pendingStartLatLng: null
+          waypoints: [],   // [{id, lat, lng, snapHex:{lat,lng,q,r,levelIndex}, marker}]
+          segments: [],    // [{fromId,toId,hexes:[{lat,lng,q,r}], distanceKm, pace}]
+          segmentLayers: [], // [{fromId,toId,polyMain,polyOutline}]
+          summaryMarker: null
         }
       };
-
-      function mToLat(m) { return m / 111320; }
-      function mToLng(m, lat) { return m / (111320 * Math.cos((lat * Math.PI) / 180)); }
-      function distanceMeters(a, b) {
-        const R = 6371000;
-        const lat1 = a.lat * Math.PI / 180;
-        const lat2 = b.lat * Math.PI / 180;
-        const dLat = (b.lat - a.lat) * Math.PI / 180;
-        const dLng = (b.lng - a.lng) * Math.PI / 180;
-        const sinDLat = Math.sin(dLat / 2);
-        const sinDLng = Math.sin(dLng / 2);
-        const aa = sinDLat * sinDLat +
-          Math.cos(lat1) * Math.cos(lat2) *
-          sinDLng * sinDLng;
-        const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
-        return R * c;
-      }
 
       function makeLevel(idx, areaKm2, meta) {
         const areaSqM = areaKm2 * HEX_CONFIG.KM2_TO_M2;
@@ -376,21 +409,12 @@
       function buildLevels() {
         return AREA_KM2.map((aKm2, i) => makeLevel(i + 1, aKm2, META[i] || {}));
       }
-      function zoomToMainLevel(z) {
-        const zi = Math.round(z);
-        const mapped = MAIN_BY_ZOOM[zi];
-        return mapped || 1;
-      }
+
       function gridToMeters(level, q, r) {
         const R = level.R;
         const x = R * HEX_CONFIG.SQ3 * (q + r / 2);
         const y = R * 1.5 * r;
         return { x, y };
-      }
-      function metersToLatLng(x, y) {
-        const lat = appState.gridOriginLat + mToLat(y);
-        const lng = appState.gridOriginLng + mToLng(x, appState.gridOriginLat);
-        return { lat, lng };
       }
       function gridToLatLng(level, q, r) {
         const { x, y } = gridToMeters(level, q, r);
@@ -410,8 +434,21 @@
         }
         return pt;
       }
-      function estimateGridRangeForBounds(level, bounds, maxCells) {
+
+      function metersToAxialForLevel(level, x, y) {
         const R = level.R;
+        const qf = (HEX_CONFIG.SQ3/3 * x - 1/3 * y) / R;
+        const rf = (2/3 * y) / R;
+        let q = Math.round(qf);
+        let r = Math.round(rf);
+        return { q, r };
+      }
+      function latLngToAxial(level, lat, lng) {
+        const { x, y } = latLngToMeters(lat, lng);
+        return metersToAxialForLevel(level, x, y);
+      }
+
+      function estimateGridRangeForBounds(level, bounds, maxCells) {
         const corners = [
           { lat: bounds.getSouth(), lng: bounds.getWest() },
           { lat: bounds.getSouth(), lng: bounds.getEast() },
@@ -421,21 +458,16 @@
         const xs = [];
         const ys = [];
         corners.forEach(c => {
-          const dy = (c.lat - appState.gridOriginLat) * 111320;
-          const dx = (c.lng - appState.gridOriginLng) * 111320 * Math.cos(appState.gridOriginLat * Math.PI / 180);
-          xs.push(dx);
-          ys.push(dy);
+          const { x, y } = latLngToMeters(c.lat, c.lng);
+          xs.push(x);
+          ys.push(y);
         });
         const minX = Math.min(...xs);
         const maxX = Math.max(...xs);
         const minY = Math.min(...ys);
         const maxY = Math.max(...ys);
         function metersToAxial(x, y) {
-          const qf = (HEX_CONFIG.SQ3/3 * x - 1/3 * y) / R;
-          const rf = (2/3 * y) / R;
-          let q = Math.round(qf);
-          let r = Math.round(rf);
-          return { q, r };
+          return metersToAxialForLevel(level, x, y);
         }
         const c1 = metersToAxial(minX, minY);
         const c2 = metersToAxial(minX, maxY);
@@ -462,6 +494,7 @@
         }
         return { qMin, qMax, rMin, rMax };
       }
+
       function computeHexPolygon(lat, lng, R, latRef) {
         const latR = mToLat(R);
         const lngR = mToLng(R, latRef);
@@ -475,6 +508,7 @@
         }
         return pts;
       }
+
       function buildHexLayerForLevel(level, bounds, color, strokeOpacity, fillOpacity, maxCells) {
         const padded = bounds.pad(HEX_CONFIG.BOUNDS_PAD_FACTOR);
         const { qMin, qMax, rMin, rMax } = estimateGridRangeForBounds(level, padded, maxCells);
@@ -499,95 +533,13 @@
           })
         ]);
       }
+
       function boundsKey(bounds) {
         const s = bounds.getSouth().toFixed(4);
         const n = bounds.getNorth().toFixed(4);
         const w = bounds.getWest().toFixed(4);
         const e = bounds.getEast().toFixed(4);
         return `${s},${w},${n},${e}`;
-      }
-
-      // HEX coord helpers
-
-      function latLngToMeters(lat, lng) {
-        const dy = (lat - appState.gridOriginLat) * 111320;
-        const dx = (lng - appState.gridOriginLng) * 111320 * Math.cos(appState.gridOriginLat * Math.PI / 180);
-        return { x: dx, y: dy };
-      }
-
-      function metersToAxialForLevel(level, x, y) {
-        const R = level.R;
-        const qf = (HEX_CONFIG.SQ3/3 * x - 1/3 * y) / R;
-        const rf = (2/3 * y) / R;
-        let q = Math.round(qf);
-        let r = Math.round(rf);
-        return { q, r };
-      }
-
-      function latLngToAxial(level, lat, lng) {
-        const { x, y } = latLngToMeters(lat, lng);
-        return metersToAxialForLevel(level, x, y);
-      }
-
-      function axialToCube(q, r) {
-        const x = q;
-        const z = r;
-        const y = -x - z;
-        return { x, y, z };
-      }
-
-      function cubeToAxial(c) {
-        return { q: c.x, r: c.z };
-      }
-
-      function cubeLerp(a, b, t) {
-        return {
-          x: a.x + (b.x - a.x) * t,
-          y: a.y + (b.y - a.y) * t,
-          z: a.z + (b.z - a.z) * t
-        };
-      }
-
-      function cubeRound(c) {
-        let rx = Math.round(c.x);
-        let ry = Math.round(c.y);
-        let rz = Math.round(c.z);
-
-        const xDiff = Math.abs(rx - c.x);
-        const yDiff = Math.abs(ry - c.y);
-        const zDiff = Math.abs(rz - c.z);
-
-        if (xDiff > yDiff && xDiff > zDiff) {
-          rx = -ry -rz;
-        } else if (yDiff > zDiff) {
-          ry = -rx -rz;
-        } else {
-          rz = -rx -ry;
-        }
-
-        return { x: rx, y: ry, z: rz };
-      }
-
-      function buildHexLine(q1, r1, q2, r2) {
-        const a = axialToCube(q1, r1);
-        const b = axialToCube(q2, r2);
-        const N = Math.max(
-          Math.abs(a.x - b.x),
-          Math.abs(a.y - b.y),
-          Math.abs(a.z - b.z)
-        );
-        const results = [];
-        for (let i = 0; i <= N; i++) {
-          const t = N === 0 ? 0 : i / N;
-          const c = cubeLerp(a, b, t);
-          const cr = cubeRound(c);
-          const { q, r } = cubeToAxial(cr);
-          const key = q + "," + r;
-          if (!results.length || results[results.length - 1].key !== key) {
-            results.push({ q, r, key });
-          }
-        }
-        return results;
       }
 
       const LEVELS = buildLevels();
@@ -612,6 +564,12 @@
         wrap.appendChild(tt);
         levelsEl.appendChild(wrap);
       });
+
+      function zoomToMainLevel(z) {
+        const zi = Math.round(z);
+        const mapped = MAIN_BY_ZOOM[zi];
+        return mapped || 1;
+      }
 
       if (typeof L.Map.prototype.getBearing !== "function") {
         L.Map.prototype.getBearing = function () {
@@ -649,9 +607,9 @@
         basemapSelect.appendChild(opt);
       });
 
-      const defaultBaseKey = "opentopo";
-      (baseLayers[defaultBaseKey] || baseLayers["osm"]).addTo(map);
-      appState.currentBaseLayerKey = baseLayers[defaultBaseKey] ? defaultBaseKey : "osm";
+      const defaultBaseKey = "osm";
+      (baseLayers[defaultBaseKey] || baseLayers["opentopo"]).addTo(map);
+      appState.currentBaseLayerKey = baseLayers[defaultBaseKey] ? defaultBaseKey : "opentopo";
       basemapSelect.value = appState.currentBaseLayerKey;
 
       function setBaseLayer(key) {
@@ -677,21 +635,17 @@
           appState.hexLayerMacro = null;
         }
       }
-      function updateLevelsFromZoom() {
-        const z = map.getZoom();
-        appState.mainLevel = zoomToMainLevel(z);
-        appState.macroLevel = Math.min(
-          appState.mainLevel + 1,
-          appState.levels.length
+
+      function shouldRedrawForMove() {
+        if (!appState.lastRedrawCenter) return true;
+        const currentCenter = map.getCenter();
+        const d = distanceMeters(
+          { lat: currentCenter.lat, lng: currentCenter.lng },
+          { lat: appState.lastRedrawCenter.lat, lng: appState.lastRedrawCenter.lng }
         );
-        const buttons = document.querySelectorAll(".hex-btn");
-        buttons.forEach((b, i) => {
-          b.classList.toggle("active", i + 1 === appState.mainLevel);
-        });
-        if (appState.route.startLatLngOriginal && appState.route.endLatLngOriginal) {
-          rebuildRouteFromOriginal();
-        }
+        return d >= HEX_CONFIG.MIN_MOVE_REDRAW_METERS;
       }
+
       function redrawHex() {
         clearHexLayers();
         if (
@@ -732,15 +686,7 @@
         appState.lastBoundsKey = boundsKey(bounds);
         appState.lastRedrawCenter = map.getCenter();
       }
-      function shouldRedrawForMove() {
-        if (!appState.lastRedrawCenter) return true;
-        const currentCenter = map.getCenter();
-        const d = distanceMeters(
-          { lat: currentCenter.lat, lng: currentCenter.lng },
-          { lat: appState.lastRedrawCenter.lat, lng: appState.lastRedrawCenter.lng }
-        );
-        return d >= HEX_CONFIG.MIN_MOVE_REDRAW_METERS;
-      }
+
       function scheduleRedraw() {
         clearTimeout(appState.redrawTimer);
         appState.redrawTimer = setTimeout(() => {
@@ -750,10 +696,7 @@
           redrawHex();
         }, 140);
       }
-      function updateGridForViewChange() {
-        updateLevelsFromZoom();
-        scheduleRedraw();
-      }
+
       function updateCompass(bearing) {
         const deg = Math.round(bearing);
         appState.bearing = deg;
@@ -938,8 +881,26 @@
       });
 
       const contextMenu = document.getElementById("context-menu");
+      function setContextMenuEnabled(hasRoute) {
+        const startItem = contextMenu.querySelector('[data-action="route-start"]');
+        const addItem   = contextMenu.querySelector('[data-action="route-add"]');
+        const clearItem = contextMenu.querySelector('[data-action="route-clear"]');
+
+        if (hasRoute) {
+          startItem.textContent = "Restart route here";
+          addItem.classList.remove("disabled");
+          clearItem.classList.remove("disabled");
+        } else {
+          startItem.textContent = "Start route here";
+          addItem.classList.add("disabled");
+          clearItem.classList.add("disabled");
+        }
+      }
+
       function showContextMenu(x, y, latlng) {
         appState.lastContextLatLng = latlng;
+        const hasRoute = appState.route.waypoints.length > 0;
+        setContextMenuEnabled(hasRoute);
         contextMenu.style.left = x + "px";
         contextMenu.style.top  = y + "px";
         contextMenu.style.display = "block";
@@ -947,7 +908,8 @@
       function hideContextMenu() {
         contextMenu.style.display = "none";
       }
-      mapEl = map.getContainer();
+
+      const mapEl = map.getContainer();
       mapEl.addEventListener("contextmenu", (e) => {
         if (document.getElementById("ui").contains(e.target)) return;
         e.preventDefault();
@@ -964,32 +926,23 @@
       function clearRoute() {
         const r = appState.route;
         const m = appState.map;
-        if (r.polylineMain) {
-          m.removeLayer(r.polylineMain);
-          r.polylineMain = null;
-        }
-        if (r.polylineOutline) {
-          m.removeLayer(r.polylineOutline);
-          r.polylineOutline = null;
-        }
+        r.segmentLayers.forEach(segLayer => {
+          if (segLayer.polyMain) m.removeLayer(segLayer.polyMain);
+          if (segLayer.polyOutline) m.removeLayer(segLayer.polyOutline);
+        });
+        r.segmentLayers = [];
         if (r.summaryMarker) {
           m.removeLayer(r.summaryMarker);
           r.summaryMarker = null;
         }
-        if (r.startWaypoint) {
-          m.removeLayer(r.startWaypoint);
-          r.startWaypoint = null;
-        }
-        if (r.endWaypoint) {
-          m.removeLayer(r.endWaypoint);
-          r.endWaypoint = null;
-        }
-        r.startHex = null;
-        r.endHex = null;
-        r.hexes = [];
+        r.waypoints.forEach(wp => {
+          if (wp.marker) m.removeLayer(wp.marker);
+        });
+        r.waypoints = [];
+        r.segments = [];
       }
 
-      function pickHexAtLatLng(level, lat, lng) {
+      function pickHexCenterForLatLng(level, lat, lng) {
         const axial = latLngToAxial(level, lat, lng);
         const { q, r } = axial;
         const pt = getGridLatLng(level, q, r);
@@ -1000,6 +953,15 @@
           lat: pt.lat,
           lng: pt.lng
         };
+      }
+
+      function snapWaypointToHex(wp) {
+        const level = appState.levels[appState.mainLevel - 1];
+        const hex = pickHexCenterForLatLng(level, wp.lat, wp.lng);
+        wp.snapHex = hex;
+        if (wp.marker) {
+          wp.marker.setLatLng([hex.lat, hex.lng]);
+        }
       }
 
       function formatDistance(totalKm) {
@@ -1022,95 +984,295 @@
         return `${totalHours.toFixed(1)} h`;
       }
 
-      function rebuildRouteFromOriginal() {
-        const r = appState.route;
-        if (!r.startLatLngOriginal || !r.endLatLngOriginal) return;
-        buildRouteAB(r.startLatLngOriginal, r.endLatLngOriginal, false);
+      let waypointIdCounter = 1;
+
+      function makeWaypointMarker(lat, lng, id) {
+        return L.marker([lat, lng], {
+          draggable: true,
+          icon: L.divIcon({
+            className: '',
+            html: '<div class="route-waypoint-icon"></div>',
+            iconSize: [12, 12],
+            iconAnchor: [6, 6]
+          })
+        });
       }
 
-      function buildRouteAB(startLatLng, endLatLng, storeOriginal = true) {
-        clearRoute();
+      function addWaypoint(lat, lng) {
         const m = appState.map;
-        const r = appState.route;
+        const id = waypointIdCounter++;
 
-        if (storeOriginal) {
-          r.startLatLngOriginal = { ...startLatLng };
-          r.endLatLngOriginal   = { ...endLatLng };
-        }
+        const wp = {
+          id,
+          lat,
+          lng,
+          snapHex: null,
+          marker: null
+        };
 
-        const level = appState.levels[appState.mainLevel - 1];
+        snapWaypointToHex(wp);
 
-        const startHex = pickHexAtLatLng(level, startLatLng.lat, startLatLng.lng);
-        const endHex   = pickHexAtLatLng(level, endLatLng.lat,   endLatLng.lng);
+        const marker = makeWaypointMarker(wp.snapHex.lat, wp.snapHex.lng, id).addTo(m);
+        wp.marker = marker;
 
-        r.startHex = startHex;
-        r.endHex   = endHex;
-
-        const lineHexes = buildHexLine(startHex.q, startHex.r, endHex.q, endHex.r);
-
-        const hexes = lineHexes.map(h => {
-          const pt = getGridLatLng(level, h.q, h.r);
-          return { q: h.q, r: h.r, lat: pt.lat, lng: pt.lng };
+        marker.on('dragend', (e) => {
+          const pos = e.target.getLatLng();
+          wp.lat = pos.lat;
+          wp.lng = pos.lng;
+          snapWaypointToHex(wp);
+          rebuildSegmentsFromWaypoints();
         });
 
-        r.hexes = hexes;
-        if (hexes.length < 2) return;
+        marker.on('contextmenu', (e) => {
+          e.originalEvent.preventDefault();
+          removeWaypointById(id);
+        });
 
-        const latlngs = hexes.map(h => [h.lat, h.lng]);
+        appState.route.waypoints.push(wp);
+        rebuildSegmentsFromWaypoints();
+      }
 
-        r.polylineOutline = L.polyline(latlngs, {
-          color: '#000000',
-          weight: 5,
-          opacity: 0.9
-        }).addTo(m);
+      function axialToCube(q, r) {
+        const x = q;
+        const z = r;
+        const y = -x - z;
+        return { x, y, z };
+      }
 
-        r.polylineMain = L.polyline(latlngs, {
-          color: '#ffffff',
-          weight: 3,
-          opacity: 0.95
-        }).addTo(m);
+      function cubeToAxial(c) {
+        return { q: c.x, r: c.z };
+      }
 
-        r.startWaypoint = L.circleMarker([startHex.lat, startHex.lng], {
-          radius: 5,
-          color: '#000',
-          weight: 2,
-          fillColor: '#ffffff',
-          fillOpacity: 1,
-          className: 'route-waypoint'
-        }).addTo(m);
+      function cubeLerp(a, b, t) {
+        return {
+          x: a.x + (b.x - a.x) * t,
+          y: a.y + (b.y - a.y) * t,
+          z: a.z + (b.z - a.z) * t
+        };
+      }
 
-        r.endWaypoint = L.circleMarker([endHex.lat, endHex.lng], {
-          radius: 5,
-          color: '#000',
-          weight: 2,
-          fillColor: '#ffffff',
-          fillOpacity: 1,
-          className: 'route-waypoint'
-        }).addTo(m);
+      function cubeRound(c) {
+        let rx = Math.round(c.x);
+        let ry = Math.round(c.y);
+        let rz = Math.round(c.z);
 
-        let totalMeters = 0;
-        for (let i = 1; i < hexes.length; i++) {
-          totalMeters += distanceMeters(
-            { lat: hexes[i-1].lat, lng: hexes[i-1].lng },
-            { lat: hexes[i].lat,   lng: hexes[i].lng }
-          );
+        const xDiff = Math.abs(rx - c.x);
+        const yDiff = Math.abs(ry - c.y);
+        const zDiff = Math.abs(rz - c.z);
+
+        if (xDiff > yDiff && xDiff > zDiff) {
+          rx = -ry -rz;
+        } else if (yDiff > zDiff) {
+          ry = -rx -rz;
+        } else {
+          rz = -rx -ry;
         }
-        const totalKm = totalMeters / 1000;
 
-        const travelSpeedKmh = 5;
-        const totalHours = totalKm / travelSpeedKmh;
+        return { x: rx, y: ry, z: rz };
+      }
+
+      function buildHexLine(q1, r1, q2, r2) {
+        const a = axialToCube(q1, r1);
+        const b = axialToCube(q2, r2);
+        const N = Math.max(
+          Math.abs(a.x - b.x),
+          Math.abs(a.y - b.y),
+          Math.abs(a.z - b.z)
+        );
+        const results = [];
+        for (let i = 0; i <= N; i++) {
+          const t = N === 0 ? 0 : i / N;
+          const c = cubeLerp(a, b, t);
+          const cr = cubeRound(c);
+          const { q, r } = cubeToAxial(cr);
+          const key = q + "," + r;
+          if (!results.length || results[results.length - 1].key !== key) {
+            results.push({ q, r, key });
+          }
+        }
+        return results;
+      }
+
+      function rebuildSegmentsFromWaypoints() {
+        const r = appState.route;
+        const m = appState.map;
+
+        r.segmentLayers.forEach(segLayer => {
+          if (segLayer.polyMain) m.removeLayer(segLayer.polyMain);
+          if (segLayer.polyOutline) m.removeLayer(segLayer.polyOutline);
+        });
+        r.segmentLayers = [];
+
+        const level = appState.levels[appState.mainLevel - 1];
+        const oldSegments = r.segments;
+        r.segments = [];
+
+        r.waypoints.forEach(wp => {
+          snapWaypointToHex(wp);
+        });
+
+        for (let i = 1; i < r.waypoints.length; i++) {
+          const wpA = r.waypoints[i - 1];
+          const wpB = r.waypoints[i];
+
+          const startHex = wpA.snapHex;
+          const endHex   = wpB.snapHex;
+
+          const lineHexes = buildHexLine(startHex.q, startHex.r, endHex.q, endHex.r);
+          const hexes = lineHexes.map(h => {
+            const pt = getGridLatLng(level, h.q, h.r);
+            return { q: h.q, r: h.r, lat: pt.lat, lng: pt.lng };
+          });
+
+          let distMeters = 0;
+          for (let j = 1; j < hexes.length; j++) {
+            distMeters += distanceMeters(
+              { lat: hexes[j-1].lat, lng: hexes[j-1].lng },
+              { lat: hexes[j].lat,   lng: hexes[j].lng }
+            );
+          }
+
+          const oldSeg = oldSegments.find(s => s.fromId === wpA.id && s.toId === wpB.id);
+          const pace = oldSeg ? oldSeg.pace : 'normal';
+
+          r.segments.push({
+            fromId: wpA.id,
+            toId: wpB.id,
+            hexes,
+            distanceKm: distMeters / 1000,
+            pace
+          });
+        }
+
+        redrawRouteSegmentsAndLabel();
+        setContextMenuEnabled(r.waypoints.length > 0);
+      }
+
+      function rebuildRouteFromWaypoints() {
+        if (!appState.route.waypoints.length) return;
+        rebuildSegmentsFromWaypoints();
+      }
+
+      function nearestPointOnPolyline(latlngs, point) {
+        if (!latlngs.length) return null;
+        let best = { lat: latlngs[0][0], lng: latlngs[0][1] };
+        let bestDist = distanceMeters(best, point);
+
+        for (let i = 0; i < latlngs.length - 1; i++) {
+          const a = { lat: latlngs[i][0],   lng: latlngs[i][1]   };
+          const b = { lat: latlngs[i+1][0], lng: latlngs[i+1][1] };
+
+          const ax = a.lng, ay = a.lat;
+          const bx = b.lng, by = b.lat;
+          const px = point.lng, py = point.lat;
+
+          const vx = bx - ax;
+          const vy = by - ay;
+          const wx = px - ax;
+          const wy = py - ay;
+          const c1 = vx * wx + vy * wy;
+          const c2 = vx * vx + vy * vy;
+          let t = c2 === 0 ? 0 : c1 / c2;
+          t = Math.max(0, Math.min(1, t));
+
+          const proj = { lat: ay + t * vy, lng: ax + t * vx };
+          const d = distanceMeters(proj, point);
+          if (d < bestDist) {
+            bestDist = d;
+            best = proj;
+          }
+        }
+        return best;
+      }
+
+      function redrawRouteSegmentsAndLabel() {
+        const r = appState.route;
+        const m = appState.map;
+
+        if (r.segmentLayers.length) {
+          r.segmentLayers.forEach(segLayer => {
+            if (segLayer.polyMain) m.removeLayer(segLayer.polyMain);
+            if (segLayer.polyOutline) m.removeLayer(segLayer.polyOutline);
+          });
+          r.segmentLayers = [];
+        }
+
+        let oldLabelPos = null;
+        if (r.summaryMarker) {
+          oldLabelPos = r.summaryMarker.getLatLng();
+          m.removeLayer(r.summaryMarker);
+          r.summaryMarker = null;
+        }
+
+        if (!r.segments.length) return;
+
+        const allHexes = [];
+        r.segments.forEach(seg => {
+          if (!seg.hexes.length) return;
+          if (!allHexes.length) {
+            allHexes.push(...seg.hexes);
+          } else {
+            allHexes.push(...seg.hexes.slice(1));
+          }
+        });
+        if (allHexes.length < 2) return;
+
+        let totalKm = 0;
+        let totalHex = 0;
+        let totalHours = 0;
+
+        r.segments.forEach(seg => {
+          const latlngs = seg.hexes.map(h => [h.lat, h.lng]);
+          const pace = seg.pace || 'normal';
+          const color = PACE_COLOR[pace] || '#ffffff';
+
+          const polyOutline = L.polyline(latlngs, {
+            color: '#000000',
+            weight: 6,
+            opacity: 0.9
+          }).addTo(m);
+
+          const polyMain = L.polyline(latlngs, {
+            color,
+            weight: 3,
+            opacity: 0.95
+          }).addTo(m);
+
+          polyMain.on('click', (e) => {
+            L.DomEvent.stopPropagation(e);
+            cycleSegmentPace(seg);
+          });
+
+          r.segmentLayers.push({
+            fromId: seg.fromId,
+            toId: seg.toId,
+            polyMain,
+            polyOutline
+          });
+
+          totalKm += seg.distanceKm;
+          totalHex += seg.hexes.length;
+          const speed = PACE_SPEED[pace] || 5;
+          totalHours += seg.distanceKm / speed;
+        });
 
         const distStr = formatDistance(totalKm);
         const timeStr = formatDurationHours(totalHours);
 
-        const midIndex = Math.floor(hexes.length / 2);
-        const midLatLng = [hexes[midIndex].lat, hexes[midIndex].lng];
+        const latlngsWhole = allHexes.map(h => [h.lat, h.lng]);
+        let labelLatLng;
+        if (oldLabelPos) {
+          labelLatLng = nearestPointOnPolyline(latlngsWhole, {lat: oldLabelPos.lat, lng: oldLabelPos.lng});
+        } else {
+          const midIndex = Math.floor(allHexes.length / 2);
+          labelLatLng = { lat: allHexes[midIndex].lat, lng: allHexes[midIndex].lng };
+        }
 
         const labelHtml =
-          `${hexes.length} hex · ${distStr} · ${timeStr}`;
+          `${totalHex} hex · ${distStr} · ${timeStr}`;
 
-        r.summaryMarker = L.marker(midLatLng, {
-          interactive: false,
+        r.summaryMarker = L.marker([labelLatLng.lat, labelLatLng.lng], {
+          draggable: true,
           icon: L.divIcon({
             className: 'route-label',
             html: labelHtml,
@@ -1118,48 +1280,75 @@
             iconAnchor: [0, 0]
           })
         }).addTo(m);
+
+        r.summaryMarker.on('dragend', (e) => {
+          const pos = e.target.getLatLng();
+          const snapped = nearestPointOnPolyline(latlngsWhole, {lat: pos.lat, lng: pos.lng});
+          e.target.setLatLng(snapped);
+        });
+
+        const paceSummary = r.segments.map(s => PACE_LABEL[s.pace] || '').join(' / ');
+        r.summaryMarker.getElement().setAttribute('title', paceSummary);
+      }
+
+      function cycleSegmentPace(seg) {
+        const idx = PACE_ORDER.indexOf(seg.pace || 'normal');
+        const next = PACE_ORDER[(idx + 1) % PACE_ORDER.length];
+        seg.pace = next;
+        redrawRouteSegmentsAndLabel();
+      }
+
+      function removeWaypointById(id) {
+        const r = appState.route;
+        const m = appState.map;
+        const idx = r.waypoints.findIndex(wp => wp.id === id);
+        if (idx === -1) return;
+        const wp = r.waypoints[idx];
+        if (wp.marker) m.removeLayer(wp.marker);
+        r.waypoints.splice(idx, 1);
+        r.segments = [];
+        if (r.waypoints.length === 0) {
+          clearRoute();
+          setContextMenuEnabled(false);
+        } else {
+          rebuildSegmentsFromWaypoints();
+        }
       }
 
       contextMenu.addEventListener("click", async (e) => {
         const item = e.target.closest(".item");
-        if (!item || !appState.lastContextLatLng) return;
+        if (!item) return;
         const action = item.getAttribute("data-action");
-        const { lat, lng } = appState.lastContextLatLng;
-        const text = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        if (item.classList.contains("disabled") &&
+            (action === "route-add" || action === "route-clear")) {
+          return;
+        }
+        const lastLL = appState.lastContextLatLng;
+        if (!lastLL && (action === "route-start" || action === "route-add" || action === "set-origin" || action === "copy")) {
+          return;
+        }
+
+        const { lat, lng } = lastLL || {};
+        const text = lastLL ? `${lat.toFixed(6)}, ${lng.toFixed(6)}` : "";
 
         if (action === "copy") {
-          try { await navigator.clipboard.writeText(text); } catch (_) {}
+          try { if (text) await navigator.clipboard.writeText(text); } catch (_) {}
         } else if (action === "set-origin") {
-          appState.gridOriginLat = lat;
-          appState.gridOriginLng = lng;
-          appState.gridCache = {};
-          redrawHex();
+          if (lastLL) {
+            appState.gridOriginLat = lat;
+            appState.gridOriginLng = lng;
+            appState.gridCache = {};
+            redrawHex();
+            rebuildRouteFromWaypoints();
+          }
         } else if (action === "route-start") {
           clearRoute();
-          appState.route._pendingStartLatLng = { lat, lng };
-
-          const m = appState.map;
-          appState.route.startWaypoint = L.circleMarker([lat, lng], {
-            radius: 5,
-            color: '#000',
-            weight: 2,
-            fillColor: '#ffffff',
-            fillOpacity: 1,
-            className: 'route-waypoint'
-          }).addTo(m);
-
-          appState.route.startLatLngOriginal = { lat, lng };
-          appState.route.endLatLngOriginal = null;
-        } else if (action === "route-end") {
-          if (appState.route._pendingStartLatLng) {
-            buildRouteAB(appState.route._pendingStartLatLng, { lat, lng }, true);
-            delete appState.route._pendingStartLatLng;
-          }
+          addWaypoint(lat, lng);
+        } else if (action === "route-add") {
+          addWaypoint(lat, lng);
         } else if (action === "route-clear") {
           clearRoute();
-          delete appState.route._pendingStartLatLng;
-          appState.route.startLatLngOriginal = null;
-          appState.route.endLatLngOriginal = null;
+          setContextMenuEnabled(false);
         }
 
         hideContextMenu();
@@ -1167,9 +1356,23 @@
 
       zoomSliderEl.value = map.getZoom();
       updateZoomTooltip();
+      function updateLevelsFromZoom() {
+        const z = map.getZoom();
+        appState.mainLevel = zoomToMainLevel(z);
+        appState.macroLevel = Math.min(
+          appState.mainLevel + 1,
+          appState.levels.length
+        );
+        const buttons = document.querySelectorAll(".hex-btn");
+        buttons.forEach((b, i) => {
+          b.classList.toggle("active", i + 1 === appState.mainLevel);
+        });
+        rebuildRouteFromWaypoints();
+      }
       updateLevelsFromZoom();
       redrawHex();
       updateCompass(0);
+      setContextMenuEnabled(false);
     });
   </script>
 </body>
