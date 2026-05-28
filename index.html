@@ -105,6 +105,22 @@
       font-size:12px;
       max-width:200px;
     }
+
+    .route-label {
+      background: rgba(0,0,0,0.9);
+      color: #fff;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      border: 1px solid rgba(255,255,255,0.3);
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.7);
+      transform: translate(-50%, -50%);
+    }
+
+    .route-waypoint {
+      box-shadow: 0 0 6px rgba(0,0,0,0.7);
+    }
   </style>
 </head>
 <body data-debug="hex-fixed-grid">
@@ -170,7 +186,10 @@
 
   <div id="context-menu">
     <div class="item" data-action="copy">Copy coordinates</div>
-    <div class="item" data-action="set-origin">Set as grid center</div>
+    <div class="item" data-action="set-origin">Set as Center</div>
+    <div class="item" data-action="route-start">Start route here</div>
+    <div class="item" data-action="route-end">End route here</div>
+    <div class="item" data-action="route-clear">Clear route</div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -234,7 +253,6 @@
         23: 1
       };
 
-      // Basemap list in ordine: OSM, topo, satellite, light
       const BASEMAPS = [
         {
           key: "osm",
@@ -251,8 +269,8 @@
           name: "OpenTopoMap (relief)",
           url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
           options: {
-            maxZoom: 23,          // forza stretching oltre il nativo
-            maxNativeZoom: 17,    // nativo
+            maxZoom: 23,
+            maxNativeZoom: 17,
             attribution: "OpenTopoMap"
           }
         },
@@ -307,7 +325,21 @@
         gridOriginLat: GRID_ORIGIN_DEFAULT.lat,
         gridOriginLng: GRID_ORIGIN_DEFAULT.lng,
 
-        gridCache: {}
+        gridCache: {},
+
+        route: {
+          startHex: null,
+          endHex: null,
+          hexes: [],
+          polylineMain: null,
+          polylineOutline: null,
+          summaryMarker: null,
+          startWaypoint: null,
+          endWaypoint: null,
+          startLatLngOriginal: null,
+          endLatLngOriginal: null,
+          _pendingStartLatLng: null
+        }
       };
 
       function mToLat(m) { return m / 111320; }
@@ -475,6 +507,89 @@
         return `${s},${w},${n},${e}`;
       }
 
+      // HEX coord helpers
+
+      function latLngToMeters(lat, lng) {
+        const dy = (lat - appState.gridOriginLat) * 111320;
+        const dx = (lng - appState.gridOriginLng) * 111320 * Math.cos(appState.gridOriginLat * Math.PI / 180);
+        return { x: dx, y: dy };
+      }
+
+      function metersToAxialForLevel(level, x, y) {
+        const R = level.R;
+        const qf = (HEX_CONFIG.SQ3/3 * x - 1/3 * y) / R;
+        const rf = (2/3 * y) / R;
+        let q = Math.round(qf);
+        let r = Math.round(rf);
+        return { q, r };
+      }
+
+      function latLngToAxial(level, lat, lng) {
+        const { x, y } = latLngToMeters(lat, lng);
+        return metersToAxialForLevel(level, x, y);
+      }
+
+      function axialToCube(q, r) {
+        const x = q;
+        const z = r;
+        const y = -x - z;
+        return { x, y, z };
+      }
+
+      function cubeToAxial(c) {
+        return { q: c.x, r: c.z };
+      }
+
+      function cubeLerp(a, b, t) {
+        return {
+          x: a.x + (b.x - a.x) * t,
+          y: a.y + (b.y - a.y) * t,
+          z: a.z + (b.z - a.z) * t
+        };
+      }
+
+      function cubeRound(c) {
+        let rx = Math.round(c.x);
+        let ry = Math.round(c.y);
+        let rz = Math.round(c.z);
+
+        const xDiff = Math.abs(rx - c.x);
+        const yDiff = Math.abs(ry - c.y);
+        const zDiff = Math.abs(rz - c.z);
+
+        if (xDiff > yDiff && xDiff > zDiff) {
+          rx = -ry -rz;
+        } else if (yDiff > zDiff) {
+          ry = -rx -rz;
+        } else {
+          rz = -rx -ry;
+        }
+
+        return { x: rx, y: ry, z: rz };
+      }
+
+      function buildHexLine(q1, r1, q2, r2) {
+        const a = axialToCube(q1, r1);
+        const b = axialToCube(q2, r2);
+        const N = Math.max(
+          Math.abs(a.x - b.x),
+          Math.abs(a.y - b.y),
+          Math.abs(a.z - b.z)
+        );
+        const results = [];
+        for (let i = 0; i <= N; i++) {
+          const t = N === 0 ? 0 : i / N;
+          const c = cubeLerp(a, b, t);
+          const cr = cubeRound(c);
+          const { q, r } = cubeToAxial(cr);
+          const key = q + "," + r;
+          if (!results.length || results[results.length - 1].key !== key) {
+            results.push({ q, r, key });
+          }
+        }
+        return results;
+      }
+
       const LEVELS = buildLevels();
       appState.levels = LEVELS;
 
@@ -573,6 +688,9 @@
         buttons.forEach((b, i) => {
           b.classList.toggle("active", i + 1 === appState.mainLevel);
         });
+        if (appState.route.startLatLngOriginal && appState.route.endLatLngOriginal) {
+          rebuildRouteFromOriginal();
+        }
       }
       function redrawHex() {
         clearHexLayers();
@@ -778,35 +896,7 @@
       });
       map.on("zoomend", () => {
         zoomSliderEl.value = map.getZoom();
-        updateGridForViewChange();
-      });
-
-      let dragRotateStart = null;
-      let dragRotateStartBearing = null;
-      let dragRotateActive = false;
-      const mapEl = map.getContainer();
-
-      mapEl.addEventListener("mousedown", (e) => {
-        if (e.button !== 1) return;
-        e.preventDefault();
-        dragRotateStart = e.clientX;
-        dragRotateStartBearing = map.getBearing();
-        dragRotateActive = true;
-      });
-      document.addEventListener("mousemove", (e) => {
-        if (!dragRotateActive) return;
-        const delta = (e.clientX - dragRotateStart) * 0.5;
-        map.setBearing(dragRotateStartBearing + delta);
-        updateCompass(map.getBearing());
-        scheduleRedraw();
-      });
-      document.addEventListener("mouseup", () => {
-        dragRotateStart = null;
-        dragRotateStartBearing = null;
-        dragRotateActive = false;
-      });
-      mapEl.addEventListener("auxclick", (e) => {
-        if (e.button === 1) e.preventDefault();
+        updateLevelsFromZoom();
       });
 
       function applyTheme(isDark) {
@@ -857,6 +947,7 @@
       function hideContextMenu() {
         contextMenu.style.display = "none";
       }
+      mapEl = map.getContainer();
       mapEl.addEventListener("contextmenu", (e) => {
         if (document.getElementById("ui").contains(e.target)) return;
         e.preventDefault();
@@ -869,12 +960,173 @@
           hideContextMenu();
         }
       });
+
+      function clearRoute() {
+        const r = appState.route;
+        const m = appState.map;
+        if (r.polylineMain) {
+          m.removeLayer(r.polylineMain);
+          r.polylineMain = null;
+        }
+        if (r.polylineOutline) {
+          m.removeLayer(r.polylineOutline);
+          r.polylineOutline = null;
+        }
+        if (r.summaryMarker) {
+          m.removeLayer(r.summaryMarker);
+          r.summaryMarker = null;
+        }
+        if (r.startWaypoint) {
+          m.removeLayer(r.startWaypoint);
+          r.startWaypoint = null;
+        }
+        if (r.endWaypoint) {
+          m.removeLayer(r.endWaypoint);
+          r.endWaypoint = null;
+        }
+        r.startHex = null;
+        r.endHex = null;
+        r.hexes = [];
+      }
+
+      function pickHexAtLatLng(level, lat, lng) {
+        const axial = latLngToAxial(level, lat, lng);
+        const { q, r } = axial;
+        const pt = getGridLatLng(level, q, r);
+        return {
+          levelIndex: level.idx,
+          q,
+          r,
+          lat: pt.lat,
+          lng: pt.lng
+        };
+      }
+
+      function formatDistance(totalKm) {
+        if (totalKm < 1) {
+          const m = totalKm * 1000;
+          return `${m.toFixed(0)} m`;
+        }
+        return `${totalKm.toFixed(1)} km`;
+      }
+
+      function formatDurationHours(totalHours) {
+        const totalSeconds = totalHours * 3600;
+        if (totalSeconds < 60) {
+          return `${totalSeconds.toFixed(0)} s`;
+        }
+        const totalMinutes = totalSeconds / 60;
+        if (totalMinutes < 60) {
+          return `${totalMinutes.toFixed(0)} min`;
+        }
+        return `${totalHours.toFixed(1)} h`;
+      }
+
+      function rebuildRouteFromOriginal() {
+        const r = appState.route;
+        if (!r.startLatLngOriginal || !r.endLatLngOriginal) return;
+        buildRouteAB(r.startLatLngOriginal, r.endLatLngOriginal, false);
+      }
+
+      function buildRouteAB(startLatLng, endLatLng, storeOriginal = true) {
+        clearRoute();
+        const m = appState.map;
+        const r = appState.route;
+
+        if (storeOriginal) {
+          r.startLatLngOriginal = { ...startLatLng };
+          r.endLatLngOriginal   = { ...endLatLng };
+        }
+
+        const level = appState.levels[appState.mainLevel - 1];
+
+        const startHex = pickHexAtLatLng(level, startLatLng.lat, startLatLng.lng);
+        const endHex   = pickHexAtLatLng(level, endLatLng.lat,   endLatLng.lng);
+
+        r.startHex = startHex;
+        r.endHex   = endHex;
+
+        const lineHexes = buildHexLine(startHex.q, startHex.r, endHex.q, endHex.r);
+
+        const hexes = lineHexes.map(h => {
+          const pt = getGridLatLng(level, h.q, h.r);
+          return { q: h.q, r: h.r, lat: pt.lat, lng: pt.lng };
+        });
+
+        r.hexes = hexes;
+        if (hexes.length < 2) return;
+
+        const latlngs = hexes.map(h => [h.lat, h.lng]);
+
+        r.polylineOutline = L.polyline(latlngs, {
+          color: '#000000',
+          weight: 5,
+          opacity: 0.9
+        }).addTo(m);
+
+        r.polylineMain = L.polyline(latlngs, {
+          color: '#ffffff',
+          weight: 3,
+          opacity: 0.95
+        }).addTo(m);
+
+        r.startWaypoint = L.circleMarker([startHex.lat, startHex.lng], {
+          radius: 5,
+          color: '#000',
+          weight: 2,
+          fillColor: '#ffffff',
+          fillOpacity: 1,
+          className: 'route-waypoint'
+        }).addTo(m);
+
+        r.endWaypoint = L.circleMarker([endHex.lat, endHex.lng], {
+          radius: 5,
+          color: '#000',
+          weight: 2,
+          fillColor: '#ffffff',
+          fillOpacity: 1,
+          className: 'route-waypoint'
+        }).addTo(m);
+
+        let totalMeters = 0;
+        for (let i = 1; i < hexes.length; i++) {
+          totalMeters += distanceMeters(
+            { lat: hexes[i-1].lat, lng: hexes[i-1].lng },
+            { lat: hexes[i].lat,   lng: hexes[i].lng }
+          );
+        }
+        const totalKm = totalMeters / 1000;
+
+        const travelSpeedKmh = 5;
+        const totalHours = totalKm / travelSpeedKmh;
+
+        const distStr = formatDistance(totalKm);
+        const timeStr = formatDurationHours(totalHours);
+
+        const midIndex = Math.floor(hexes.length / 2);
+        const midLatLng = [hexes[midIndex].lat, hexes[midIndex].lng];
+
+        const labelHtml =
+          `${hexes.length} hex · ${distStr} · ${timeStr}`;
+
+        r.summaryMarker = L.marker(midLatLng, {
+          interactive: false,
+          icon: L.divIcon({
+            className: 'route-label',
+            html: labelHtml,
+            iconSize: null,
+            iconAnchor: [0, 0]
+          })
+        }).addTo(m);
+      }
+
       contextMenu.addEventListener("click", async (e) => {
         const item = e.target.closest(".item");
         if (!item || !appState.lastContextLatLng) return;
         const action = item.getAttribute("data-action");
         const { lat, lng } = appState.lastContextLatLng;
         const text = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+
         if (action === "copy") {
           try { await navigator.clipboard.writeText(text); } catch (_) {}
         } else if (action === "set-origin") {
@@ -882,7 +1134,34 @@
           appState.gridOriginLng = lng;
           appState.gridCache = {};
           redrawHex();
+        } else if (action === "route-start") {
+          clearRoute();
+          appState.route._pendingStartLatLng = { lat, lng };
+
+          const m = appState.map;
+          appState.route.startWaypoint = L.circleMarker([lat, lng], {
+            radius: 5,
+            color: '#000',
+            weight: 2,
+            fillColor: '#ffffff',
+            fillOpacity: 1,
+            className: 'route-waypoint'
+          }).addTo(m);
+
+          appState.route.startLatLngOriginal = { lat, lng };
+          appState.route.endLatLngOriginal = null;
+        } else if (action === "route-end") {
+          if (appState.route._pendingStartLatLng) {
+            buildRouteAB(appState.route._pendingStartLatLng, { lat, lng }, true);
+            delete appState.route._pendingStartLatLng;
+          }
+        } else if (action === "route-clear") {
+          clearRoute();
+          delete appState.route._pendingStartLatLng;
+          appState.route.startLatLngOriginal = null;
+          appState.route.endLatLngOriginal = null;
         }
+
         hideContextMenu();
       });
 
